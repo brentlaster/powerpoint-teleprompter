@@ -1,0 +1,32 @@
+' ── Teleprompter bridge ──
+' Paste this into a new Module in your PowerPoint VBA editor.
+' (Tools → Macro → Visual Basic Editor → Insert → Module)
+'
+' On every slide change it pings the local teleprompter server.
+' No file I/O — works within PowerPoint's sandbox.
+
+Private Sub NotifyTeleprompter(idx As Long, total As Long)
+    Dim url As String
+    url = "http://localhost:8765/api/slide/" & idx & "/" & total
+
+    ' Use MacScript to run curl in the background (non-blocking)
+    On Error Resume Next
+    MacScript "do shell script ""curl -s -m 1 " & url & " > /dev/null 2>&1 &"""
+    On Error GoTo 0
+End Sub
+
+Sub OnSlideShowPageChange(ByVal SSW As SlideShowWindow)
+    Dim idx As Long
+    idx = SSW.View.Slide.SlideIndex
+
+    Dim total As Long
+    total = SSW.Presentation.Slides.Count
+
+    NotifyTeleprompter idx, total
+End Sub
+
+Sub OnSlideShowTerminate(ByVal SSW As SlideShowWindow)
+    On Error Resume Next
+    MacScript "do shell script ""curl -s -m 1 http://localhost:8765/api/stopped > /dev/null 2>&1 &"""
+    On Error GoTo 0
+End Sub
