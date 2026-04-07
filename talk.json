@@ -1,0 +1,6 @@
+{
+    "deck": "my-talk.pptm",
+    "script": "my-talk_script.md",
+    "port": 8765,
+    "auto_start": false
+}
