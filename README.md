@@ -57,7 +57,7 @@ The terminal will print:
 
 ### 3. Set up the phone remote
 
-Open `http://localhost:8765/qr` in any browser on your computer. A QR code appears with the correct LAN IP address baked in. Scan it with your phone camera to open the remote control page. Your phone must be on the same Wi-Fi network as your computer.
+When the teleprompter opens in your browser, expand the **Controls** panel (bottom-right) where you'll find a QR code at the top. Scan it with your phone camera to open the remote control page. Your phone must be on the same Wi-Fi network as your computer. A dedicated QR page is also available at `http://localhost:8765/qr`.
 
 **macOS firewall note:** The first time you run the server, macOS may ask to allow Python to accept incoming connections. Click **Allow**. If the phone can't connect, check **System Settings > Network > Firewall** and ensure Python is permitted.
 
@@ -121,7 +121,7 @@ All display changes made on the phone are applied to the teleprompter in real ti
 
 ## Teleprompter Window Controls
 
-The teleprompter browser window has a collapsible floating control panel (bottom-right) with the same controls as the phone remote. Changes made here sync back to the phone. All buttons are touch-friendly (60px minimum) in case you use a touchscreen monitor.
+The teleprompter browser window has a collapsible floating control panel (bottom-right) with all the same controls as the phone remote, plus a scannable QR code for quick phone setup. Changes made here sync back to the phone. All buttons are touch-friendly (60px minimum) in case you use a touchscreen monitor.
 
 **Note:** Touching the teleprompter screen may steal focus from PowerPoint and cause your clicker to stop working. Use the phone remote instead to avoid this issue.
 
@@ -207,9 +207,8 @@ This single command will:
 
 1. Open the PowerPoint deck (if `deck` is specified)
 2. Start the teleprompter server
-3. Open the teleprompter in your browser
-4. Open the QR code page so you can scan with your phone
-5. Optionally start the slideshow automatically (if `auto_start` is true)
+3. Open the teleprompter in your browser (QR code is in the Controls panel)
+4. Optionally start the slideshow automatically (if `auto_start` is true)
 
 You can also override the deck path on the command line:
 
@@ -222,19 +221,20 @@ python3 teleprompter.py --config talk.json --deck other-version.pptm
 A convenience shell script (`launch.sh`) is included:
 
 ```bash
-# Use default config (talk.json in the same directory)
-./launch.sh
+# Run from your talk directory (picks up ./talk.json automatically)
+cd ~/talks/keynote
+/path/to/launch.sh
 
-# Use a specific config file
-./launch.sh ~/talks/keynote/talk.json
+# Or specify a config file explicitly
+/path/to/launch.sh ~/talks/keynote/talk.json
 ```
 
 ### Typical Workflow with Config
 
 1. Create your deck (`my-talk.pptm`) and script (`my-talk_script.md`) in a folder.
 2. Create a `talk.json` config file in the same folder.
-3. Run `./launch.sh` (or `python3 teleprompter.py --config talk.json`).
-4. Scan the QR code with your phone.
+3. `cd` into the folder and run `launch.sh`. It finds `talk.json` in the current directory, starts the server, and opens the teleprompter in your browser.
+4. Expand the Controls panel and scan the QR code with your phone.
 5. Tap **Start Slideshow** on the phone remote when ready.
 6. Present using your clicker for slides and the phone remote for scrolling.
 

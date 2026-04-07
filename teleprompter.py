@@ -1135,12 +1135,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .cp-qr-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 6px 0 8px 0;
+    gap: 14px;
+    padding: 8px 0 10px 0;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
-  .cp-qr-row canvas { border-radius: 4px; }
+  .cp-qr-row canvas { border-radius: 6px; }
   .cp-qr-label {
     font-size: 0.75rem;
     color: var(--dim);
@@ -1647,8 +1647,8 @@ fetch('/api/remote-url')
     link.textContent = 'phone remote';
     new QRCode(document.getElementById('cpQrCode'), {
       text: d.url,
-      width: 64,
-      height: 64,
+      width: 160,
+      height: 160,
       colorDark: '#e94560',
       colorLight: '#111118',
       correctLevel: QRCode.CorrectLevel.M
