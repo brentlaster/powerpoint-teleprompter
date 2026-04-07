@@ -198,6 +198,9 @@ def _ppt_applescript(action, deck_path=None):
             'tell application "Microsoft PowerPoint"\n'
             '  if (count of slide show windows) > 0 then\n'
             '    go to next slide slide show view of slide show window 1\n'
+            '    set idx to slide index of slide of slide show view of slide show window 1\n'
+            '    set tot to count of slides of slide show settings of active presentation\n'
+            '    return (idx as string) & "/" & (tot as string)\n'
             '  end if\n'
             'end tell'
         )
@@ -206,6 +209,9 @@ def _ppt_applescript(action, deck_path=None):
             'tell application "Microsoft PowerPoint"\n'
             '  if (count of slide show windows) > 0 then\n'
             '    go to previous slide slide show view of slide show window 1\n'
+            '    set idx to slide index of slide of slide show view of slide show window 1\n'
+            '    set tot to count of slides of slide show settings of active presentation\n'
+            '    return (idx as string) & "/" & (tot as string)\n'
             '  end if\n'
             'end tell'
         )
@@ -240,7 +246,7 @@ def _ppt_applescript(action, deck_path=None):
         )
         if result.returncode != 0 and result.stderr.strip():
             return False, result.stderr.strip()
-        return True, None
+        return True, result.stdout.strip() if result.stdout else None
     except subprocess.TimeoutExpired:
         return False, "AppleScript timed out"
     except Exception as e:
@@ -386,12 +392,18 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
 
         elif self.path == "/api/ppt/next":
-            ok, err = _ppt_applescript("next")
-            self._json_response({"ok": ok, "error": err})
+            ok, result = _ppt_applescript("next")
+            if ok and result and "/" in result:
+                idx, tot = result.split("/", 1)
+                _activate_slideshow(int(idx))
+            self._json_response({"ok": ok, "error": result if not ok else None})
 
         elif self.path == "/api/ppt/prev":
-            ok, err = _ppt_applescript("prev")
-            self._json_response({"ok": ok, "error": err})
+            ok, result = _ppt_applescript("prev")
+            if ok and result and "/" in result:
+                idx, tot = result.split("/", 1)
+                _activate_slideshow(int(idx))
+            self._json_response({"ok": ok, "error": result if not ok else None})
 
         elif self.path == "/api/ppt/start":
             ok, err = _ppt_applescript("start")
