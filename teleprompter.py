@@ -114,6 +114,14 @@ local_ip = "127.0.0.1"
 server_port = DEFAULT_PORT
 
 
+def _activate_slideshow(slide_num):
+    """Set the slideshow as active and jump to the given slide."""
+    global slideshow_active, current_slide, total_slides
+    slideshow_active = True
+    current_slide = slide_num
+    total_slides = len(script_sections)
+
+
 def parse_script(filepath):
     """Parse a markdown script file into sections split by SLIDE markers."""
     text = Path(filepath).read_text(encoding="utf-8")
@@ -389,10 +397,7 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
             ok, err = _ppt_applescript("start")
             if ok:
                 # Activate teleprompter on slide 1 since VBA won't fire for the initial slide
-                global slideshow_active, current_slide, total_slides
-                slideshow_active = True
-                current_slide = 1
-                total_slides = len(script_sections)
+                _activate_slideshow(1)
             self._json_response({"ok": ok, "error": err})
 
         elif self.path.startswith("/api/scroll/"):
