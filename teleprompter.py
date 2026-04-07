@@ -1092,6 +1092,48 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
 
   /* Auto-scroll big toggle */
+  .cp-start-btn {
+    width: 100%;
+    padding: 12px 8px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 2px solid #b8860b;
+    background: #b8860b;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: 0.12s;
+    min-height: 48px;
+  }
+  .cp-start-btn:hover { background: #d4a017; border-color: #d4a017; }
+  .cp-start-btn:active { transform: scale(0.95); }
+
+  .cp-slide-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .cp-slide-btn {
+    flex: 1;
+    padding: 12px 8px;
+    border-radius: 10px;
+    border: 2px solid #1a6b3a;
+    background: #1a6b3a;
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: 0.12s;
+    min-height: 48px;
+  }
+  .cp-slide-btn:hover { background: #238c4e; border-color: #238c4e; }
+  .cp-slide-btn:active { transform: scale(0.95); }
+
   .autoscroll-toggle {
     width: 100%;
     padding: 14px;
@@ -1226,6 +1268,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div class="cp-qr-row">
         <div id="cpQrCode"></div>
         <div class="cp-qr-label">Scan for<br><a href="#" id="cpQrLink">phone remote</a></div>
+      </div>
+
+      <!-- Start slideshow -->
+      <button class="cp-start-btn" id="cpStartShow">&#x25B6; Start Slideshow</button>
+
+      <!-- Slide control -->
+      <div class="cp-slide-row">
+        <button class="cp-slide-btn" id="cpPrevSlide">&#x25C0; Prev Slide</button>
+        <button class="cp-slide-btn" id="cpNextSlide">Next Slide &#x25B6;</button>
       </div>
 
       <!-- Auto-Scroll toggle -->
@@ -1641,6 +1692,15 @@ function addTouchButton(id, handler) {
   });
 }
 
+addTouchButton('cpStartShow', function() {
+  fetch('/api/ppt/start').catch(function(){});
+});
+addTouchButton('cpPrevSlide', function() {
+  fetch('/api/ppt/prev').catch(function(){});
+});
+addTouchButton('cpNextSlide', function() {
+  fetch('/api/ppt/next').catch(function(){});
+});
 addTouchButton('fontUp', function() { changeFontSize(0.3); });
 addTouchButton('fontDown', function() { changeFontSize(-0.3); });
 addTouchButton('widthUp', function() { changeWidth(WIDTH_STEP); });
