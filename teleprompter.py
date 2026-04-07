@@ -387,6 +387,12 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
 
         elif self.path == "/api/ppt/start":
             ok, err = _ppt_applescript("start")
+            if ok:
+                # Activate teleprompter on slide 1 since VBA won't fire for the initial slide
+                global slideshow_active, current_slide, total_slides
+                slideshow_active = True
+                current_slide = 1
+                total_slides = len(script_sections)
             self._json_response({"ok": ok, "error": err})
 
         elif self.path.startswith("/api/scroll/"):
