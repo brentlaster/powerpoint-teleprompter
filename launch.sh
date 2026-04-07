@@ -23,4 +23,11 @@ if [ ! -f "$CONFIG" ]; then
 fi
 
 echo "Starting teleprompter with config: $CONFIG"
-python3 "$SCRIPT_DIR/teleprompter.py" --config "$CONFIG"
+
+# Read port from config (default 8765)
+PORT=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('port', 8765))" 2>/dev/null || echo 8765)
+
+# Open the browser after a short delay to let the server start
+(sleep 2 && open "http://localhost:$PORT" 2>/dev/null || xdg-open "http://localhost:$PORT" 2>/dev/null) &
+
+python3 "$SCRIPT_DIR/teleprompter.py" --config "$CONFIG" --no-browser

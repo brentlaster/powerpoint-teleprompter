@@ -1815,17 +1815,13 @@ def main():
     print(f"  QR code page:  http://localhost:{port}/qr")
     print("\nPress Ctrl+C to quit.\n")
 
-    # ── Auto-open browser ──
+    # ── Auto-open browser (in background so server is ready first) ──
     if not args.no_browser:
-        if args.config:
-            # Config mode: open QR page so user can scan with phone
-            webbrowser.open(f"http://localhost:{port}/qr")
-            # Also open the teleprompter on the second screen
+        def _open_browser():
             import time as _time
-            _time.sleep(0.3)
+            _time.sleep(1)
             webbrowser.open(f"http://localhost:{port}")
-        else:
-            webbrowser.open(f"http://localhost:{port}")
+        threading.Thread(target=_open_browser, daemon=True).start()
 
     # ── Auto-start slideshow (after brief delay for PowerPoint to load) ──
     if auto_start_show and deck_path and platform.system() == "Darwin":
