@@ -1140,7 +1140,19 @@ HTML_PAGE = r"""<!DOCTYPE html>
     border-bottom: 1px solid var(--border);
     margin-bottom: 8px;
   }
-  .cp-qr-row canvas { border-radius: 6px; }
+  .cp-qr-row canvas, .cp-qr-row img {
+    border-radius: 6px;
+    width: 160px !important;
+    height: 160px !important;
+    min-width: 160px;
+    min-height: 160px;
+    display: block;
+  }
+  #cpQrCode {
+    flex-shrink: 0;
+    width: 160px;
+    height: 160px;
+  }
   .cp-qr-label {
     font-size: 0.75rem;
     color: var(--dim);
