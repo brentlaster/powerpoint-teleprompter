@@ -5,7 +5,16 @@
 # If no config file is given, defaults to talk.json in the same directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG="${1:-$SCRIPT_DIR/talk.json}"
+
+# If no argument given, look for talk.json in the current directory first,
+# then fall back to the script's own directory.
+if [ -n "$1" ]; then
+    CONFIG="$1"
+elif [ -f "./talk.json" ]; then
+    CONFIG="$(pwd)/talk.json"
+else
+    CONFIG="$SCRIPT_DIR/talk.json"
+fi
 
 if [ ! -f "$CONFIG" ]; then
     echo "Config file not found: $CONFIG"
