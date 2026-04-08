@@ -665,9 +665,26 @@ REMOTE_PAGE = r"""<!DOCTYPE html>
     color: var(--dim);
     margin-top: 10px;
   }
+
+  /* Keep-alive pixel — continuous animation prevents screen sleep */
+  .keep-alive {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0.01;
+    animation: keepAlive 1s infinite alternate;
+    pointer-events: none;
+  }
+  @keyframes keepAlive {
+    from { transform: translateX(0); }
+    to { transform: translateX(1px); }
+  }
 </style>
 </head>
 <body>
+<div class="keep-alive"></div>
 
 <h1>Teleprompter Remote</h1>
 <div class="slide-info" id="slideInfo">&mdash;</div>
@@ -865,7 +882,8 @@ function poll() {
 setInterval(poll, 500);
 poll();
 
-// ── Keep screen awake (Wake Lock API) ──
+// ── Keep screen awake ──
+// Method 1: Wake Lock API (modern browsers)
 var wakeLock = null;
 async function requestWakeLock() {
   try {
@@ -876,10 +894,28 @@ async function requestWakeLock() {
   } catch (e) {}
 }
 requestWakeLock();
-// Re-acquire wake lock when page becomes visible again (e.g. after tab switch)
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible') requestWakeLock();
 });
+
+// Method 2: Hidden canvas redraws every second to signal screen activity
+(function() {
+  var c = document.createElement('canvas');
+  c.width = 2; c.height = 2;
+  c.style.cssText = 'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0.01;pointer-events:none;';
+  document.body.appendChild(c);
+  var ctx = c.getContext('2d');
+  setInterval(function() {
+    ctx.fillStyle = 'rgba(' + (Math.random()*255|0) + ',0,0,0.01)';
+    ctx.fillRect(0, 0, 2, 2);
+  }, 1000);
+})();
+
+// Method 3: Periodic fetch + title toggle to keep browser active
+setInterval(function() {
+  document.title = document.title === 'Teleprompter Remote' ?
+    'Teleprompter Remote ' : 'Teleprompter Remote';
+}, 10000);
 </script>
 </body>
 </html>
