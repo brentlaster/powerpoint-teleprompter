@@ -864,6 +864,22 @@ function poll() {
 
 setInterval(poll, 500);
 poll();
+
+// ── Keep screen awake (Wake Lock API) ──
+var wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', function() { wakeLock = null; });
+    }
+  } catch (e) {}
+}
+requestWakeLock();
+// Re-acquire wake lock when page becomes visible again (e.g. after tab switch)
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible') requestWakeLock();
+});
 </script>
 </body>
 </html>
