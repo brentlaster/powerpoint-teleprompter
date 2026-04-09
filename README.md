@@ -24,6 +24,15 @@ teleprompter    (http://your-ip:8765/remote)
 
 This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/O permissions needed, no AppleScript quirks. The VBA macro simply runs `curl` in the background on each slide transition.
 
+## Features
+
+- **Real-time sync** -- VBA macro notifies the teleprompter on every slide change
+- **Phone remote control** -- adjust display, scroll text, and advance slides from your phone
+- **Demo Mode** (macOS) -- one-tap switch between your PowerPoint slideshow and a Terminal window for live coding demos, then back again on the same slide
+- **Expandable Q&A index** -- add a collapsible Q&A section to your Questions slide using HTML `<details>`/`<summary>` tags in your script
+- **Mirror mode** -- horizontal flip for physical teleprompter rigs
+- **Config file & launcher** -- point to your deck + script in a JSON file and launch everything with one command
+
 ## Requirements
 
 - **Python 3.6+** (no additional packages for VBA mode)
@@ -103,9 +112,11 @@ Green **Prev Slide** and **Next Slide** buttons tell PowerPoint to change slides
 
 Blue **Scroll Up** and **Scroll Down** buttons scroll the teleprompter text. Each tap scrolls approximately 300 pixels with smooth animation.
 
-### Auto-Scroll
+### Demo Mode (macOS)
 
-A large toggle button starts/pauses automatic scrolling. The speed is adjustable (5 to 120 seconds per screen-height of text, default 30). Auto-scroll automatically resets and restarts from the top when the slide changes. It stops when it reaches the end of the text.
+A large toggle button switches between PowerPoint and Terminal for live coding demos. When you tap **Switch to Demo**, the teleprompter opens a Terminal window over the running slideshow, `cd`s into the talk directory, and types the demo command (without executing it) so you can hit Return when ready. Tap **Back to Slides** to stop the demo process, close Terminal, and return to the slideshow on the exact slide where you left off. The keyboard shortcut `D` also toggles demo mode.
+
+Demo mode is available when a `demo-*.py` file exists in the same directory as your speaker script. The teleprompter auto-detects it at startup. If no demo script is found, the button is hidden.
 
 ### Display Settings
 
@@ -113,7 +124,6 @@ All display changes made on the phone are applied to the teleprompter in real ti
 
 | Control | Range | Default | Description |
 |---------|-------|---------|-------------|
-| **Speed** | 5s -- 120s | 30s | Auto-scroll speed (seconds per viewport height) |
 | **Font** | 0.8 -- 6.0 | 2.8 | Font size in rem units |
 | **Width** | 600 -- 3000px | 1800px | Max width of the text column |
 | **Spacing** | -4 -- 24px | 0px | Extra space between words |
@@ -133,13 +143,39 @@ These work when the teleprompter browser window has focus:
 |-----|--------|
 | `+` / `=` | Increase font size |
 | `-` / `_` | Decrease font size |
-| `S` | Toggle auto-scroll |
+| `D` | Toggle demo mode (switch between slides and Terminal) |
 | `T` | Start / pause timer |
 | `M` | Toggle mirror mode |
 
-### Tap to Pause/Resume
+## Expandable Q&A Index
 
-If auto-scroll is running, tapping the text area pauses it. Tapping again resumes. This distinguishes taps from swipes, so manual scrolling still works.
+You can add an expandable Q&A section to your Questions slide by including HTML `<details>` and `<summary>` tags directly in your script file. The teleprompter renders these as collapsible entries -- tap a question to reveal the answer.
+
+```markdown
+## SLIDE 47: QUESTIONS
+
+Thank you! I'd love to take your questions.
+
+<div class="qa-index">
+
+<details>
+<summary>What's the difference between X and Y?</summary>
+<div class="qa-answer">
+X handles ... while Y focuses on ...
+</div>
+</details>
+
+<details>
+<summary>How does this scale in production?</summary>
+<div class="qa-answer">
+In production you would ...
+</div>
+</details>
+
+</div>
+```
+
+The Q&A index is styled with indented borders, a triangle expand indicator, and a larger answer font for readability. Questions stay collapsed by default so the slide isn't cluttered, and you can quickly open any one during the Q&A session.
 
 ## Command-Line Options
 
@@ -255,6 +291,8 @@ cd ~/talks/keynote
 | `/api/scroll/up` | GET | Scroll teleprompter text up |
 | `/api/scroll/down` | GET | Scroll teleprompter text down |
 | `/api/scroll/top` | GET | Scroll teleprompter text to top |
+| `/api/demo/toggle` | GET | Toggle demo mode (switch between slideshow and Terminal) |
+| `/api/demo/state` | GET | Current demo mode state and available demo script |
 | `/api/remote-url` | GET | Get the phone remote URL with LAN IP |
 
 ## File Structure
@@ -264,6 +302,7 @@ my-talk/
   my-talk.pptx              # Original slide deck
   my-talk.pptm              # Macro-enabled version (after setup)
   my-talk_script.md          # Speaker script with SLIDE markers
+  demo-example.py            # Live demo script (auto-detected by teleprompter)
   talk.json                  # Config file (deck + script paths, settings)
   vba_macro.txt              # Auto-generated macro (created by teleprompter.py)
   teleprompter.py            # The teleprompter server
@@ -286,6 +325,15 @@ Check that your phone and computer are on the same Wi-Fi network. On macOS, ensu
 
 **Slide control buttons on phone don't work**
 macOS needs permission for Python to control PowerPoint. Go to System Settings > Privacy & Security > Automation and allow Python (or Terminal) to control Microsoft PowerPoint.
+
+**PowerPoint prompts about macros every time**
+Go to PowerPoint > Preferences > Security & Privacy and set "Enable all macros" to suppress the prompt. This applies to all presentations, so only enable it if you trust the files you open.
+
+**Demo mode button doesn't appear**
+The teleprompter looks for a file matching `demo-*.py` in the same directory as your speaker script. If none is found, the demo toggle is hidden. Check that your demo script follows the naming convention (e.g., `demo-example.py`).
+
+**Demo mode: Terminal doesn't appear over slideshow**
+macOS needs permission for Python to control Terminal under System Settings > Privacy & Security > Automation. Allow Python (or Terminal) to send events to other applications.
 
 **Port already in use**
 Another instance may be running. Kill it with `lsof -ti:8765 | xargs kill` or use `--port` to pick a different port.

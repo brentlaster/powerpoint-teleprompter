@@ -92,6 +92,12 @@ slideshow_active = False
 mode = "vba"  # "vba" or "keyboard"
 deck_path = None  # path to .pptx/.pptm file (set via config or --deck)
 
+# ── Demo mode state ──
+demo_mode = False
+demo_script = None       # path to demo-*.py (auto-detected from script directory)
+demo_dir = None          # directory containing the demo script
+demo_slide = None        # slide number when demo was entered (to resume from)
+
 # ── Display settings (controlled by remote) ──
 display_settings = {
     "fontSize": 2.8,
@@ -217,12 +223,15 @@ def _ppt_applescript(action, deck_path=None):
         )
     elif action == "start":
         # Start slideshow from slide 1 on the already-open presentation
+        # Ensure starting slide is reset to 1 (demo mode may have changed it)
         script = (
             'tell application "Microsoft PowerPoint"\n'
             '  activate\n'
             '  if (count of presentations) > 0 then\n'
             '    set thePresentation to active presentation\n'
             '    set theSettings to slide show settings of thePresentation\n'
+            '    set starting slide of theSettings to 1\n'
+            '    set ending slide of theSettings to count of slides of thePresentation\n'
             '    run slide show theSettings\n'
             '  end if\n'
             'end tell'
@@ -251,6 +260,124 @@ def _ppt_applescript(action, deck_path=None):
         return False, "AppleScript timed out"
     except Exception as e:
         return False, str(e)
+
+
+def _demo_toggle():
+    """Toggle demo mode: switch between PowerPoint slideshow and Terminal.
+
+    Enter demo mode:
+      1. Open Terminal.app, cd to demo dir, type the demo command (not executed)
+      2. Leave the slideshow RUNNING — just bring Terminal to front over it
+      3. Audience sees Terminal fullscreen; slideshow stays alive behind it
+
+    Exit demo mode:
+      1. Stop demo process and close Terminal
+      2. Activate PowerPoint — slideshow is still running on the same slide
+    """
+    global demo_mode, demo_slide
+
+    if platform.system() != "Darwin":
+        return False, "Demo mode switching is only supported on macOS"
+
+    if not demo_script:
+        return False, "No demo script found in the talk directory"
+
+    demo_cmd = f"python3 {Path(demo_script).name}"
+    abs_demo_dir = str(Path(demo_dir).resolve())
+
+    if not demo_mode:
+        # ── ENTER DEMO MODE ──
+        demo_slide = current_slide
+
+        # Open Terminal over the running slideshow (do NOT exit slideshow).
+        # The slideshow keeps running behind Terminal — when we come back
+        # we just activate PowerPoint and it's on the exact same slide.
+        script = (
+            # Open Terminal, cd to demo directory, clear screen
+            'tell application "Terminal"\n'
+            '  activate\n'
+            f'  do script "cd {abs_demo_dir} && clear"\n'
+            '  delay 0.3\n'
+            'end tell\n'
+            # Type the demo command without executing it
+            'tell application "System Events"\n'
+            '  tell process "Terminal"\n'
+            '    set frontmost to true\n'
+            f'    keystroke "{demo_cmd}"\n'
+            '  end tell\n'
+            'end tell\n'
+            # Ensure Terminal stays frontmost
+            'delay 0.2\n'
+            'tell application "Terminal"\n'
+            '  activate\n'
+            'end tell\n'
+        )
+
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True, timeout=15, text=True
+            )
+            if result.returncode != 0 and result.stderr.strip():
+                return False, result.stderr.strip()
+            demo_mode = True
+            return True, "entered"
+        except subprocess.TimeoutExpired:
+            return False, "AppleScript timed out"
+        except Exception as e:
+            return False, str(e)
+
+    else:
+        # ── EXIT DEMO MODE ──
+        # Step 1: Kill the demo process and close Terminal cleanly.
+        # Ctrl-C stops running process, then 'exit' closes the shell
+        # so Terminal's close doesn't trigger a confirmation dialog.
+        term_script = (
+            'tell application "System Events"\n'
+            '  tell process "Terminal"\n'
+            '    set frontmost to true\n'
+            '    keystroke "c" using control down\n'
+            '    delay 0.3\n'
+            '    keystroke "exit"\n'
+            '    key code 36\n'  # Return key
+            '  end tell\n'
+            'end tell\n'
+            'delay 0.5\n'
+        )
+
+        try:
+            subprocess.run(
+                ["osascript", "-e", term_script],
+                capture_output=True, timeout=10, text=True
+            )
+        except Exception:
+            pass  # Best-effort Terminal cleanup
+
+        # Step 2: Just activate PowerPoint. The slideshow never stopped,
+        # so it's still running on the exact slide where we left it.
+        resume_script = (
+            'tell application "Microsoft PowerPoint"\n'
+            '  activate\n'
+            'end tell\n'
+        )
+
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", resume_script],
+                capture_output=True, timeout=10, text=True
+            )
+            demo_mode = False
+
+            if result.returncode != 0 and result.stderr.strip():
+                print(f"  Warning: resume failed: {result.stderr.strip()}")
+
+            return True, "exited"
+        except subprocess.TimeoutExpired:
+            demo_mode = False
+            return False, "AppleScript timed out"
+        except Exception as e:
+            demo_mode = False
+            return False, str(e)
 
 
 # ── Keyboard listener (fallback) ──
@@ -347,6 +474,8 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                 "totalSections": len(script_sections),
                 "active": slideshow_active,
                 "mode": mode,
+                "demoMode": demo_mode,
+                "demoAvailable": demo_script is not None,
                 "settings": settings_copy,
                 "scroll": scroll_copy,
             }
@@ -427,6 +556,22 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
             with scroll_lock:
                 self._json_response(scroll_command)
 
+        elif self.path == "/api/demo/toggle":
+            ok, result = _demo_toggle()
+            self._json_response({
+                "ok": ok,
+                "demoMode": demo_mode,
+                "error": result if not ok else None,
+                "result": result if ok else None,
+            })
+
+        elif self.path == "/api/demo/state":
+            self._json_response({
+                "demoMode": demo_mode,
+                "demoScript": Path(demo_script).name if demo_script else None,
+                "available": demo_script is not None,
+            })
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -460,6 +605,17 @@ def md_to_html(text):
     """Minimal markdown to HTML conversion."""
     import html as html_mod
     text = html_mod.escape(text)
+    # Restore allowed HTML tags for Q&A expand/collapse sections
+    for tag in ("details", "summary", "div", "span", "hr"):
+        text = text.replace(f"&lt;{tag}&gt;", f"<{tag}>")
+        text = text.replace(f"&lt;/{tag}&gt;", f"</{tag}>")
+        # Handle tags with attributes (e.g. <div class="qa-index">)
+        # After html.escape(), quotes become &quot; so we match broadly
+        text = re.sub(
+            rf"&lt;({tag}\s+.*?)&gt;",
+            lambda m: "<" + m.group(1).replace("&quot;", '"') + ">",
+            text,
+        )
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
     text = re.sub(r"_(.+?)_", r"<em>\1</em>", text)
@@ -714,18 +870,10 @@ REMOTE_PAGE = r"""<!DOCTYPE html>
   </button>
 </div>
 
-<!-- Auto-scroll toggle -->
-<button class="big-btn" id="autoScrollBtn" ontouchend="toggleScroll(event)" onclick="toggleScroll(event)">
-  &#x25B6; Start Auto-Scroll
+<!-- Demo mode toggle -->
+<button class="big-btn" id="demoBtn" style="background:#7c3aed;border-color:#7c3aed;color:#fff;" ontouchend="toggleDemo(event)" onclick="toggleDemo(event)">
+  &#x1F4BB; Switch to Demo
 </button>
-
-<!-- Scroll speed -->
-<div class="section-label">Scroll Speed</div>
-<div class="ctrl-row">
-  <button class="ctrl-btn" ontouchend="adjSpeed(-5,event)" onclick="adjSpeed(-5,event)">&#x2212;</button>
-  <span class="ctrl-value" id="speedVal">30s</span>
-  <button class="ctrl-btn" ontouchend="adjSpeed(5,event)" onclick="adjSpeed(5,event)">+</button>
-</div>
 
 <!-- Font size -->
 <div class="section-label">Font Size</div>
@@ -755,7 +903,7 @@ REMOTE_PAGE = r"""<!DOCTYPE html>
 
 <script>
 var settings = {};
-var scrolling = false;
+var demoActive = false;
 
 function stopEvent(e) {
   if (e) { e.preventDefault(); e.stopPropagation(); }
@@ -808,16 +956,27 @@ function postSettings(updates) {
     .then(function(s) { settings = s; updateUI(); });
 }
 
-function toggleScroll(e) {
+function toggleDemo(e) {
   stopEvent(e);
-  scrolling = !scrolling;
-  postSettings({ autoScroll: scrolling });
-}
-
-function adjSpeed(d, e) {
-  stopEvent(e);
-  var v = Math.max(5, Math.min(120, (settings.scrollSpeed || 30) + d));
-  postSettings({ scrollSpeed: v });
+  var btn = document.getElementById('demoBtn');
+  btn.style.opacity = '0.5';
+  btn.textContent = 'Switching...';
+  fetch('/api/demo/toggle')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.style.opacity = '1';
+      if (!data.ok && data.error) {
+        document.getElementById('statusBar').textContent = 'Error: ' + data.error;
+        btn.innerHTML = '&#x1F4BB; Switch to Demo';
+      } else {
+        updateDemoBtn(data.demoMode);
+      }
+    })
+    .catch(function() {
+      btn.style.opacity = '1';
+      btn.innerHTML = '&#x1F4BB; Switch to Demo';
+      document.getElementById('statusBar').textContent = 'Connection error';
+    });
 }
 
 function adjFont(d, e) {
@@ -839,17 +998,20 @@ function adjWordSp(d, e) {
   postSettings({ wordSpacing: v });
 }
 
-function updateUI() {
-  scrolling = settings.autoScroll || false;
-  var btn = document.getElementById('autoScrollBtn');
-  if (scrolling) {
-    btn.className = 'big-btn scrolling';
-    btn.innerHTML = '&#x23F8; Pause Auto-Scroll';
+function updateDemoBtn(isDemo) {
+  var btn = document.getElementById('demoBtn');
+  if (isDemo) {
+    btn.style.background = '#dc2626';
+    btn.style.borderColor = '#dc2626';
+    btn.innerHTML = '&#x25B6; Back to Slides';
   } else {
-    btn.className = 'big-btn';
-    btn.innerHTML = '&#x25B6; Start Auto-Scroll';
+    btn.style.background = '#7c3aed';
+    btn.style.borderColor = '#7c3aed';
+    btn.innerHTML = '&#x1F4BB; Switch to Demo';
   }
-  document.getElementById('speedVal').textContent = (settings.scrollSpeed || 30) + 's';
+}
+
+function updateUI() {
   document.getElementById('fontVal').textContent = (settings.fontSize || 2.8).toFixed(1);
   document.getElementById('widthVal').textContent = (settings.textWidth || 1800);
   document.getElementById('wordSpVal').textContent = (settings.wordSpacing || 0) + 'px';
@@ -871,6 +1033,16 @@ function poll() {
       if (data.settings) {
         settings = data.settings;
         updateUI();
+      }
+      // Sync demo button state
+      if (typeof data.demoMode !== 'undefined') {
+        if (data.demoMode !== demoActive) {
+          demoActive = data.demoMode;
+          updateDemoBtn(demoActive);
+        }
+        // Hide demo button if no demo script available
+        var demoBtn = document.getElementById('demoBtn');
+        if (demoBtn) demoBtn.style.display = data.demoAvailable ? 'flex' : 'none';
       }
       document.getElementById('statusBar').textContent = 'Connected';
     })
@@ -1017,24 +1189,45 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .teleprompter em { color: #f0c040; }
   .teleprompter.mirror { transform: scaleX(-1); }
 
-  /* Auto-scroll progress bar at top of text area */
-  .scroll-progress {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: var(--border);
-    z-index: 5;
-    display: none;
+  /* Q&A expand/collapse index */
+  .qa-index { margin-top: 0.5em; }
+  .qa-index h2 { font-size: 1.4em; color: var(--accent); margin-bottom: 0.4em; }
+  .qa-index hr { border: none; border-top: 1px solid var(--border); margin: 0.5em 0; }
+  .qa-index .qa-section-title { font-size: 1.1em; color: #2E75B6; margin: 0.6em 0 0.2em; }
+  .qa-index details {
+    margin: 0.15em 0;
+    border-left: 3px solid var(--border);
+    padding-left: 0.5em;
+    transition: border-color 0.2s;
   }
-  .scroll-progress .scroll-fill {
-    height: 100%;
-    background: var(--green);
-    transition: width 0.3s linear;
-    width: 0;
+  .qa-index details[open] { border-left-color: var(--accent); }
+  .qa-index summary {
+    cursor: pointer;
+    font-size: 0.75em;
+    font-weight: 600;
+    color: var(--text);
+    padding: 0.25em 0;
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 0.4em;
   }
-  .scroll-progress.active { display: block; }
+  .qa-index summary::before {
+    content: '\25B6';
+    font-size: 0.6em;
+    color: var(--dim);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .qa-index details[open] > summary::before { transform: rotate(90deg); color: var(--accent); }
+  .qa-index summary::-webkit-details-marker { display: none; }
+  .qa-index .qa-answer {
+    font-size: 0.85em;
+    font-weight: 400;
+    color: #ccc;
+    line-height: 1.6;
+    padding: 0.3em 0 0.5em 0;
+  }
 
   .waiting-msg {
     display: flex;
@@ -1186,14 +1379,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .cp-slide-btn:hover { background: #238c4e; border-color: #238c4e; }
   .cp-slide-btn:active { transform: scale(0.95); }
 
-  .autoscroll-toggle {
+  .demo-toggle {
     width: 100%;
     padding: 14px;
     margin-bottom: 14px;
     border-radius: 10px;
-    border: 2px solid var(--border);
-    background: var(--btn-bg);
-    color: var(--text);
+    border: 2px solid #7c3aed;
+    background: #7c3aed;
+    color: #fff;
     font-size: 1.2rem;
     font-weight: 700;
     cursor: pointer;
@@ -1206,9 +1399,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
     gap: 10px;
     min-height: 64px;
   }
-  .autoscroll-toggle:hover { background: var(--green); color: #111; border-color: var(--green); }
-  .autoscroll-toggle.scrolling { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .autoscroll-toggle.scrolling:hover { background: #c0374d; }
+  .demo-toggle:hover { background: #6d28d9; border-color: #6d28d9; }
+  .demo-toggle.active { background: #dc2626; border-color: #dc2626; }
+  .demo-toggle.active:hover { background: #b91c1c; border-color: #b91c1c; }
 
   /* Touch overlay for pause/resume */
   .touch-hint {
@@ -1293,10 +1486,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <div class="progress"><div class="fill" id="progressFill"></div></div>
 
 <div class="main">
-  <div class="scroll-progress" id="scrollProgress">
-    <div class="scroll-fill" id="scrollFill"></div>
-  </div>
-
   <div class="teleprompter" id="teleprompter">
     <div class="inner" id="scriptContent">
       <div class="waiting-msg" id="waitingMsg">
@@ -1331,20 +1520,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <button class="cp-slide-btn" id="cpNextSlide">Next Slide &#x25B6;</button>
       </div>
 
-      <!-- Auto-Scroll toggle -->
-      <button class="autoscroll-toggle" id="autoScrollBtn">
-        &#x25B6; Start Auto-Scroll
+      <!-- Demo mode toggle -->
+      <button class="demo-toggle" id="demoToggleBtn">
+        &#x1F4BB; Switch to Demo
       </button>
-
-      <!-- Scroll speed -->
-      <div class="cp-row">
-        <span class="cp-label">Speed</span>
-        <div class="cp-btn-group">
-          <button class="cp-btn" id="speedDown">&#x2212;</button>
-          <span class="cp-value" id="speedValue">30s</span>
-          <button class="cp-btn" id="speedUp">+</button>
-        </div>
-      </div>
 
       <!-- Font size -->
       <div class="cp-row">
@@ -1389,7 +1568,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </div>
 
 <div class="footer" id="footer">
-  <span><kbd>S</kbd> Auto-scroll</span>
+  <span><kbd>D</kbd> Demo mode</span>
   <span><kbd>T</kbd> Timer</span>
   <span>Open <strong>/remote</strong> on your phone to control without touching this screen</span>
   <span id="modeHint">Syncs via VBA</span>
@@ -1429,12 +1608,9 @@ var WIDTH_STEP = 200, WIDTH_MIN = 600, WIDTH_MAX = 3000;
 var wordSpacing = 0;  // px
 var WORDSP_STEP = 2, WORDSP_MIN = -4, WORDSP_MAX = 24;
 
-// ── Auto-scroll ──
-var autoScrolling = false;
-var scrollSpeed = 30;
-var SPEED_MIN = 5, SPEED_MAX = 120, SPEED_STEP = 5;
-var scrollAnimFrame = null;
-var lastScrollTime = 0;
+// ── Demo mode ──
+var demoModeActive = false;
+var demoAvailable = false;
 
 // ── Settings sync with server (for remote control) ──
 var lastSettingsVersion = 0;
@@ -1448,8 +1624,6 @@ function pushSettings() {
       fontSize: fontSize,
       textWidth: textWidth,
       wordSpacing: wordSpacing,
-      autoScroll: autoScrolling,
-      scrollSpeed: scrollSpeed,
       mirror: mirrorOn
     })
   }).catch(function() {});
@@ -1473,20 +1647,10 @@ function applyServerSettings(s) {
     wordSpacing = s.wordSpacing;
     applyWordSpacing();
   }
-  if (s.scrollSpeed !== scrollSpeed) {
-    scrollSpeed = s.scrollSpeed;
-    updateSpeedDisplay();
-  }
   if (s.mirror !== mirrorOn) {
     mirrorOn = s.mirror;
     document.getElementById('teleprompter').classList.toggle('mirror', mirrorOn);
     document.getElementById('mirrorBtn').textContent = mirrorOn ? 'On' : 'Off';
-  }
-  // Auto-scroll: start/stop based on server state
-  if (s.autoScroll && !autoScrolling) {
-    startAutoScroll(true);  // true = silent (no push back)
-  } else if (!s.autoScroll && autoScrolling) {
-    stopAutoScroll(true);
   }
 }
 
@@ -1502,10 +1666,6 @@ function applyWordSpacing() {
   document.getElementById('wordSpValue').textContent = wordSpacing + 'px';
 }
 
-function updateSpeedDisplay() {
-  document.getElementById('speedValue').textContent = scrollSpeed + 's';
-}
-
 function changeWidth(delta) {
   textWidth = Math.max(WIDTH_MIN, Math.min(WIDTH_MAX, textWidth + delta));
   updateWidthDisplay();
@@ -1518,69 +1678,45 @@ function changeWordSpacing(delta) {
   pushSettings();
 }
 
-function changeSpeed(delta) {
-  scrollSpeed = Math.max(SPEED_MIN, Math.min(SPEED_MAX, scrollSpeed + delta));
-  updateSpeedDisplay();
-  pushSettings();
+function toggleDemoMode() {
+  var btn = document.getElementById('demoToggleBtn');
+  btn.style.opacity = '0.5';
+  btn.textContent = 'Switching...';
+  fetch('/api/demo/toggle')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.style.opacity = '1';
+      if (data.ok) {
+        demoModeActive = data.demoMode;
+        updateDemoToggle();
+        showTouchHint(data.demoMode ? 'Switched to demo' : 'Back to slides');
+      } else {
+        updateDemoToggle();
+        showTouchHint('Error: ' + (data.error || 'unknown'));
+      }
+    })
+    .catch(function() {
+      btn.style.opacity = '1';
+      updateDemoToggle();
+      showTouchHint('Connection error');
+    });
 }
 
-function startAutoScroll(silent) {
-  if (autoScrolling) return;
-  autoScrolling = true;
-  var btn = document.getElementById('autoScrollBtn');
-  btn.classList.add('scrolling');
-  btn.innerHTML = '&#x23F8; Pause Auto-Scroll';
-  document.getElementById('scrollProgress').classList.add('active');
-  lastScrollTime = performance.now();
-  scrollAnimFrame = requestAnimationFrame(doAutoScroll);
-  if (!silent) {
-    showTouchHint('Auto-scroll started');
-    pushSettings();
-  }
-}
-
-function stopAutoScroll(silent) {
-  if (!autoScrolling) return;
-  autoScrolling = false;
-  var btn = document.getElementById('autoScrollBtn');
-  btn.classList.remove('scrolling');
-  btn.innerHTML = '&#x25B6; Resume Auto-Scroll';
-  document.getElementById('scrollProgress').classList.remove('active');
-  if (scrollAnimFrame) cancelAnimationFrame(scrollAnimFrame);
-  if (!silent) {
-    showTouchHint('Auto-scroll paused');
-    pushSettings();
-  }
-}
-
-function toggleAutoScroll() {
-  if (autoScrolling) stopAutoScroll();
-  else startAutoScroll();
-}
-
-function doAutoScroll(now) {
-  if (!autoScrolling) return;
-  var tp = document.getElementById('teleprompter');
-  var dt = (now - lastScrollTime) / 1000;
-  lastScrollTime = now;
-
-  var pxPerSec = tp.clientHeight / scrollSpeed;
-  tp.scrollTop += pxPerSec * dt;
-
-  var maxScroll = tp.scrollHeight - tp.clientHeight;
-  if (maxScroll > 0) {
-    var pct = (tp.scrollTop / maxScroll) * 100;
-    document.getElementById('scrollFill').style.width = pct + '%';
-  }
-
-  if (tp.scrollTop >= tp.scrollHeight - tp.clientHeight - 2) {
-    stopAutoScroll();
-    document.getElementById('autoScrollBtn').innerHTML = '&#x25B6; Start Auto-Scroll';
-    showTouchHint('Reached end of text');
+function updateDemoToggle() {
+  var btn = document.getElementById('demoToggleBtn');
+  if (!btn) return;
+  if (!demoAvailable) {
+    btn.style.display = 'none';
     return;
   }
-
-  scrollAnimFrame = requestAnimationFrame(doAutoScroll);
+  btn.style.display = 'flex';
+  if (demoModeActive) {
+    btn.className = 'demo-toggle active';
+    btn.innerHTML = '&#x25B6; Back to Slides';
+  } else {
+    btn.className = 'demo-toggle';
+    btn.innerHTML = '&#x1F4BB; Switch to Demo';
+  }
 }
 
 // ── Touch hint overlay ──
@@ -1606,16 +1742,7 @@ document.getElementById('teleprompter').addEventListener('touchmove', function()
 
 document.getElementById('teleprompter').addEventListener('touchend', function(e) {
   if (e.target.closest('.control-panel')) return;
-  if (touchMoved) return;
-  if (autoScrolling) { stopAutoScroll(); }
-  else if (document.getElementById('autoScrollBtn').innerHTML.indexOf('Resume') !== -1) { startAutoScroll(); }
 }, { passive: true });
-
-document.getElementById('teleprompter').addEventListener('click', function(e) {
-  if (e.target.closest('.control-panel')) return;
-  if (autoScrolling) { stopAutoScroll(); }
-  else if (document.getElementById('autoScrollBtn').innerHTML.indexOf('Resume') !== -1) { startAutoScroll(); }
-});
 
 // ── Polling (also syncs server settings from remote) ──
 async function pollState() {
@@ -1651,15 +1778,18 @@ async function pollState() {
         ? ((data.slide - 1) / (data.totalSlides - 1)) * 100 : 100;
       document.getElementById('progressFill').style.width = pct + '%';
 
+      // Sync demo mode state
+      if (typeof data.demoMode !== 'undefined') {
+        demoModeActive = data.demoMode;
+        demoAvailable = data.demoAvailable || false;
+        updateDemoToggle();
+      }
+
       if (data.slide !== lastSlide) {
         content.innerHTML = data.scriptHtml ||
           '<p style="color:var(--dim)">No script for this slide.</p>';
         tp.scrollTo(0, 0);
         lastSlide = data.slide;
-        if (autoScrolling) {
-          stopAutoScroll(true);
-          setTimeout(function() { startAutoScroll(); }, 300);
-        }
         if (!timerRunning && !timerElapsed) toggleTimer();
       }
       wasActive = true;
@@ -1673,7 +1803,6 @@ async function pollState() {
           '<div class="waiting-msg"><div class="icon">&#x1F4E1;</div>' +
           '<p>' + (wasActive ? 'Slideshow ended.' : 'Waiting for slideshow...<br>Start your PowerPoint slideshow and the script will appear here.') + '</p></div>';
         lastSlide = -1;
-        if (autoScrolling) stopAutoScroll(true);
       }
     }
   } catch (e) { console.error('Poll error:', e); }
@@ -1726,7 +1855,7 @@ document.addEventListener('keydown', function(e) {
     case '-': case '_': changeFontSize(-0.3); break;
     case 't': case 'T': toggleTimer(); break;
     case 'm': case 'M': toggleMirror(); break;
-    case 's': case 'S': toggleAutoScroll(); break;
+    case 'd': case 'D': toggleDemoMode(); break;
   }
 });
 
@@ -1757,12 +1886,10 @@ addTouchButton('fontUp', function() { changeFontSize(0.3); });
 addTouchButton('fontDown', function() { changeFontSize(-0.3); });
 addTouchButton('widthUp', function() { changeWidth(WIDTH_STEP); });
 addTouchButton('widthDown', function() { changeWidth(-WIDTH_STEP); });
-addTouchButton('speedUp', function() { changeSpeed(SPEED_STEP); });
-addTouchButton('speedDown', function() { changeSpeed(-SPEED_STEP); });
 addTouchButton('wordSpUp', function() { changeWordSpacing(WORDSP_STEP); });
 addTouchButton('wordSpDown', function() { changeWordSpacing(-WORDSP_STEP); });
 addTouchButton('mirrorBtn', toggleMirror);
-addTouchButton('autoScrollBtn', toggleAutoScroll);
+addTouchButton('demoToggleBtn', toggleDemoMode);
 
 // ── Collapsible panel (touch-safe) ──
 (function() {
@@ -1782,7 +1909,6 @@ addTouchButton('autoScrollBtn', toggleAutoScroll);
 // ── Init ──
 updateWidthDisplay();
 applyWordSpacing();
-updateSpeedDisplay();
 document.getElementById('fontValue').textContent = fontSize.toFixed(1);
 
 // ── QR code in control panel ──
@@ -1873,6 +1999,7 @@ def main():
 
     global script_sections, total_slides, mode, slideshow_active
     global local_ip, server_port, deck_path
+    global demo_script, demo_dir
 
     # ── Merge config file + command-line args ──
     cfg = {}
@@ -1901,6 +2028,16 @@ def main():
     script_sections = parse_script(str(script_path))
     total_slides = len(script_sections)
     print(f"Loaded {total_slides} script sections from {script_path.name}")
+
+    # ── Auto-detect demo script in the same directory ──
+    talk_dir = script_path.parent
+    demo_files = sorted(talk_dir.glob("demo-*.py"))
+    if demo_files:
+        demo_script = str(demo_files[0])
+        demo_dir = str(talk_dir)
+        print(f"Demo script: {demo_files[0].name}")
+    else:
+        print("No demo script found (looked for demo-*.py)")
 
     if deck_path:
         print(f"Deck: {deck_path}")
