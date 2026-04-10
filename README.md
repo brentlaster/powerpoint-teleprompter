@@ -348,6 +348,9 @@ The parser maps SLIDE markers 1:1 in order. Ensure your script and deck have the
 **Phone can't connect to remote**
 Check that your phone and computer are on the same Wi-Fi network. On macOS, ensure the firewall allows Python to accept incoming connections (System Settings > Network > Firewall). Verify the IP address printed in the terminal matches your computer's actual LAN IP (`ifconfig | grep "inet "` on the en0 interface).
 
+**Phone can't connect on hotel/conference WiFi**
+Many hotel and conference networks use client isolation, which prevents devices on the same WiFi from communicating with each other. The easiest workaround is to use your **phone as a mobile hotspot**: enable the hotspot on your phone, connect your Mac to it, then open the remote URL on the phone's browser. Both devices share the phone's network, so the connection works. Alternatively, use **Mac Internet Sharing** (System Settings > General > Sharing > Internet Sharing) to create a local WiFi hotspot from your Mac that the phone can join.
+
 **Slide control buttons on phone don't work**
 macOS needs permission for Python to control PowerPoint. Go to System Settings > Privacy & Security > Automation and allow Python (or Terminal) to control Microsoft PowerPoint.
 
