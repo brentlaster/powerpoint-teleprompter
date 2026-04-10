@@ -1435,11 +1435,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
      Positioned dynamically by JS to align with the teleprompter scroll area. */
   .highlight-bar {
     display: none;
-    position: fixed;
+    position: sticky;
+    top: 0;
     left: 0;
     right: 0;
-    top: 0;  /* overridden by JS positionHighlightBar() */
     height: 4.2em;
+    margin-bottom: -4.2em;  /* overlay — don't push content down */
     background: rgba(255, 245, 140, var(--hl-opacity, 0));
     border-bottom: 2px solid rgba(255, 230, 50, calc(var(--hl-opacity, 0) * 2.5));
     pointer-events: none;
@@ -1847,8 +1848,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </head>
 <body>
 
-<div class="highlight-bar" id="highlightBar"></div>
-
 <div class="top-bar">
   <div class="status">
     <div class="status-dot" id="statusDot"></div>
@@ -1866,6 +1865,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div class="scroll-arrows" id="scrollArrows"></div>
   </div>
   <div class="teleprompter" id="teleprompter">
+    <div class="highlight-bar" id="highlightBar"></div>
     <div class="inner" id="scriptContent">
       <div class="waiting-msg" id="waitingMsg">
         <div class="icon">&#x1F4E1;</div>
@@ -2268,7 +2268,7 @@ async function pollState() {
         tp.scrollTo(0, 0);
         lastSlide = data.slide;
         if (!timerRunning && !timerElapsed) toggleTimer();
-        setTimeout(function() { updateScrollIndicator(); positionHighlightBar(); }, 50);
+        setTimeout(updateScrollIndicator, 50);
       }
       wasActive = true;
     } else {
@@ -2370,22 +2370,7 @@ fetch('/api/slide-image-debug').then(function(r) { return r.json(); }).then(func
 var highlightOn = false;
 var highlightLevel = 0;  // 0-100
 
-function positionHighlightBar() {
-  var bar = document.getElementById('highlightBar');
-  var tp = document.getElementById('teleprompter');
-  if (bar && tp) {
-    var rect = tp.getBoundingClientRect();
-    // Place the highlight bar at the top of the teleprompter viewport.
-    // When scrollTop is 0, text is offset by the teleprompter's padding-top,
-    // so add padding-top if we haven't scrolled past it yet.
-    var padTop = parseFloat(getComputedStyle(tp).paddingTop) || 0;
-    var unscrolledPad = Math.max(0, padTop - tp.scrollTop);
-    bar.style.top = (rect.top + unscrolledPad) + 'px';
-  }
-}
-
-// Re-position highlight bar on scroll so it always covers the first visible text line
-document.getElementById('teleprompter').addEventListener('scroll', positionHighlightBar);
+// Highlight bar is position:sticky inside the teleprompter — no JS positioning needed.
 
 function setHighlightLevel(val) {
   highlightLevel = Math.max(0, Math.min(100, Math.round(val)));
@@ -2398,14 +2383,8 @@ function setHighlightLevel(val) {
   if (slider) slider.value = highlightLevel;
   var label = document.getElementById('highlightValue');
   if (label) label.textContent = highlightLevel === 0 ? 'Off' : highlightLevel + '%';
-  positionHighlightBar();
   pushSettings();
 }
-
-// Keep highlight bar aligned on resize
-window.addEventListener('resize', positionHighlightBar);
-// Position once on load
-positionHighlightBar();
 
 function toggleHighlight() {
   // Keyboard shortcut: toggle between 0 and 50%
