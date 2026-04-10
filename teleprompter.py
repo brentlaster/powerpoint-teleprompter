@@ -1434,16 +1434,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
   /* Highlight bar at top of teleprompter */
   .highlight-bar {
     display: none;
-    position: sticky;
+    position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    height: 3.8em;
+    height: 4.2em;
     background: rgba(255, 245, 140, var(--hl-opacity, 0));
     border-bottom: 2px solid rgba(255, 230, 50, calc(var(--hl-opacity, 0) * 2.5));
     pointer-events: none;
-    z-index: 5;
-    margin-bottom: -3.8em;
+    z-index: 50;
   }
   body.highlight-on .highlight-bar {
     display: block;
@@ -1468,17 +1467,25 @@ HTML_PAGE = r"""<!DOCTYPE html>
     opacity: 1;
   }
   .scroll-indicator .scroll-pct {
-    font-size: 0.9rem;
-    color: var(--dim);
-    font-weight: 600;
-    background: rgba(30, 30, 30, 0.7);
-    padding: 4px 8px;
-    border-radius: 6px;
+    font-size: 1.8rem;
+    color: #ccc;
+    font-weight: 700;
+    background: rgba(30, 30, 30, 0.75);
+    padding: 8px 14px;
+    border-radius: 8px;
     white-space: nowrap;
   }
-  .scroll-indicator .scroll-arrow {
-    font-size: 1.4rem;
-    color: var(--dim);
+  .scroll-indicator .scroll-arrows {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    line-height: 1;
+  }
+  .scroll-indicator .scroll-arrows .arr {
+    font-size: 2.2rem;
+    color: #ccc;
+    line-height: 0.7;
   }
 
   /* Highlight slider styling in control panel */
@@ -1839,6 +1846,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </head>
 <body>
 
+<div class="highlight-bar" id="highlightBar"></div>
+
 <div class="top-bar">
   <div class="status">
     <div class="status-dot" id="statusDot"></div>
@@ -1853,10 +1862,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <div class="main">
   <div class="scroll-indicator" id="scrollIndicator">
     <div class="scroll-pct" id="scrollPct"></div>
-    <div class="scroll-arrow">&#x25BC;</div>
+    <div class="scroll-arrows" id="scrollArrows"></div>
   </div>
   <div class="teleprompter" id="teleprompter">
-    <div class="highlight-bar" id="highlightBar"></div>
     <div class="inner" id="scriptContent">
       <div class="waiting-msg" id="waitingMsg">
         <div class="icon">&#x1F4E1;</div>
@@ -2020,7 +2028,7 @@ function updateScrollIndicator() {
   var tp = document.getElementById('teleprompter');
   var indicator = document.getElementById('scrollIndicator');
   var pctEl = document.getElementById('scrollPct');
-  var arrowEl = indicator.querySelector('.scroll-arrow');
+  var arrowsEl = document.getElementById('scrollArrows');
 
   // Measure the actual text content height (excluding the 100vh padding-bottom).
   // Get the bounding rect of the last real element inside scriptContent.
@@ -2054,8 +2062,18 @@ function updateScrollIndicator() {
     pct = Math.max(0, Math.min(100, pct));
     indicator.classList.add('visible');
     pctEl.textContent = pct + '%';
-    // Hide the down arrow when we've reached the end of real content
-    arrowEl.style.display = pct >= 100 ? 'none' : '';
+
+    // Number of arrows = number of remaining screens of text (rounded up)
+    var hiddenBelow = realContentBottom - (scrollPos + viewportHeight);
+    var screensLeft = Math.ceil(hiddenBelow / viewportHeight);
+    screensLeft = Math.max(0, screensLeft);
+
+    // Build arrow HTML (one ▼ per remaining screen)
+    var arrowHtml = '';
+    for (var a = 0; a < screensLeft; a++) {
+      arrowHtml += '<div class="arr">\u25BC</div>';
+    }
+    arrowsEl.innerHTML = arrowHtml;
   }
 }
 
