@@ -32,7 +32,7 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 - **Portrait mode** -- optimized vertical layout with a live slide preview panel at the bottom, ideal for a portrait-oriented second monitor
 - **Live slide preview** (macOS) -- captures a screenshot of the display running PowerPoint every 2 seconds (and immediately on slide change) for the portrait mode preview panel; includes a display picker for multi-monitor setups
 - **Highlight bar** -- adjustable-opacity yellow highlight band at the top of the teleprompter to mark your reading position; controlled via slider on the Controls panel or phone remote
-- **Scroll progress indicator** -- a percentage and down-arrow on the left edge shows how far through the current slide's script you've read; only appears when text overflows the screen
+- **Scroll progress indicator** -- a percentage and down-arrows on the left edge show how far through the current slide's script you've read, with one arrow per remaining screen of text; only appears when text overflows the screen
 - **Scroll past end** -- text can be scrolled completely off the top of the screen, so you're never stuck with text anchored at the bottom
 - **Demo Mode** (macOS) -- one-tap switch between your PowerPoint slideshow and a Terminal window for live coding demos, then back again on the same slide
 - **Expandable Q&A index** -- add a collapsible Q&A section to your Questions slide using HTML `<details>`/`<summary>` tags in your script
@@ -152,11 +152,11 @@ On multi-monitor setups, the **Capture** control in the Controls panel lets you 
 
 ### Scroll Progress Indicator
 
-When a slide has more script text than fits on screen, a small indicator appears on the left edge showing how far through it you've read (e.g., "33%" at the top, "100%" at the bottom). A down arrow appears alongside the percentage when there's still text below. The indicator is hidden entirely when all text fits on screen without scrolling.
+When a slide has more script text than fits on screen, an indicator appears on the left edge showing your scroll progress (e.g., "0%" at the top, "100%" at the bottom). Down arrows appear below the percentage — one arrow per remaining screen of text. For example, if there are 3 screens of text, you'll see 3 arrows initially; scrolling past the first screen reduces it to 2 arrows, and so on until you reach the bottom. The indicator is hidden entirely when all text fits on screen without scrolling.
 
 ### Highlight Bar
 
-The highlight bar places a yellow semi-transparent band across the top of the teleprompter, highlighting whatever text is at your current scroll position. Use the slider in the Controls panel (or phone remote) to adjust the intensity from 0% (off) to 100% (full opacity). Press `H` to toggle it on/off via keyboard (toggles between 0% and 50%).
+The highlight bar places a yellow semi-transparent band over the first few lines of text in the teleprompter area. It tracks your scroll position so the highlighted region always covers the topmost visible text. Use the slider in the Controls panel (or phone remote) to adjust the intensity from 0% (off) to 100% (full opacity). Press `H` to toggle it on/off via keyboard (toggles between 0% and 50%).
 
 ### Keyboard Shortcuts
 

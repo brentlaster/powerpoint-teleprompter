@@ -1431,13 +1431,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .teleprompter em { color: #f0c040; }
   .teleprompter.mirror { transform: scaleX(-1); }
 
-  /* Highlight bar at top of teleprompter */
+  /* Highlight bar overlaying the first lines of text in the teleprompter.
+     Positioned dynamically by JS to align with the teleprompter scroll area. */
   .highlight-bar {
     display: none;
     position: fixed;
-    top: 0;
     left: 0;
     right: 0;
+    top: 0;  /* overridden by JS positionHighlightBar() */
     height: 4.2em;
     background: rgba(255, 245, 140, var(--hl-opacity, 0));
     border-bottom: 2px solid rgba(255, 230, 50, calc(var(--hl-opacity, 0) * 2.5));
@@ -2030,22 +2031,13 @@ function updateScrollIndicator() {
   var pctEl = document.getElementById('scrollPct');
   var arrowsEl = document.getElementById('scrollArrows');
 
-  // Measure the actual text content height (excluding the 100vh padding-bottom).
-  // Get the bounding rect of the last real element inside scriptContent.
+  // Measure real content height excluding the 100vh padding-bottom on .inner.
+  // Use .inner's scrollHeight minus its computed padding-bottom.
   var innerEl = document.getElementById('scriptContent');
-  var children = innerEl.children;
-  var realContentBottom = 0;
-  for (var i = children.length - 1; i >= 0; i--) {
-    var child = children[i];
-    // Skip the waiting message if hidden
-    if (child.id === 'waitingMsg' && child.style.display === 'none') continue;
-    var rect = child.getBoundingClientRect();
-    if (rect.height > 0) {
-      // Get the bottom of this element relative to the scroll container
-      realContentBottom = child.offsetTop + child.offsetHeight;
-      break;
-    }
-  }
+  var innerPadBottom = parseFloat(getComputedStyle(innerEl).paddingBottom) || 0;
+  // realContentBottom: position of the bottom of real text relative to the
+  // teleprompter scroll container (includes teleprompter's padding-top).
+  var realContentBottom = innerEl.offsetTop + innerEl.scrollHeight - innerPadBottom;
 
   var viewportHeight = tp.clientHeight;
   var scrollPos = tp.scrollTop;
@@ -2055,8 +2047,6 @@ function updateScrollIndicator() {
     indicator.classList.remove('visible');
   } else {
     // How far through the real content have we scrolled?
-    // At top: scrollPos=0 → seen one viewport worth → pct = viewportHeight/realContentBottom
-    // At bottom of real content: scrollPos >= realContentBottom - viewportHeight → 100%
     var maxScroll = realContentBottom - viewportHeight;
     var pct = Math.round((scrollPos / maxScroll) * 100);
     pct = Math.max(0, Math.min(100, pct));
@@ -2066,7 +2056,7 @@ function updateScrollIndicator() {
     // Number of arrows = number of remaining screens of text (rounded up)
     var hiddenBelow = realContentBottom - (scrollPos + viewportHeight);
     var screensLeft = Math.ceil(hiddenBelow / viewportHeight);
-    screensLeft = Math.max(0, screensLeft);
+    screensLeft = Math.max(0, Math.min(screensLeft, 10));  // cap at 10
 
     // Build arrow HTML (one ▼ per remaining screen)
     var arrowHtml = '';
@@ -2278,7 +2268,7 @@ async function pollState() {
         tp.scrollTo(0, 0);
         lastSlide = data.slide;
         if (!timerRunning && !timerElapsed) toggleTimer();
-        setTimeout(updateScrollIndicator, 50);  // update after DOM reflow
+        setTimeout(function() { updateScrollIndicator(); positionHighlightBar(); }, 50);
       }
       wasActive = true;
     } else {
@@ -2380,6 +2370,23 @@ fetch('/api/slide-image-debug').then(function(r) { return r.json(); }).then(func
 var highlightOn = false;
 var highlightLevel = 0;  // 0-100
 
+function positionHighlightBar() {
+  var bar = document.getElementById('highlightBar');
+  var tp = document.getElementById('teleprompter');
+  if (bar && tp) {
+    var rect = tp.getBoundingClientRect();
+    // Place the highlight bar at the top of the teleprompter viewport.
+    // When scrollTop is 0, text is offset by the teleprompter's padding-top,
+    // so add padding-top if we haven't scrolled past it yet.
+    var padTop = parseFloat(getComputedStyle(tp).paddingTop) || 0;
+    var unscrolledPad = Math.max(0, padTop - tp.scrollTop);
+    bar.style.top = (rect.top + unscrolledPad) + 'px';
+  }
+}
+
+// Re-position highlight bar on scroll so it always covers the first visible text line
+document.getElementById('teleprompter').addEventListener('scroll', positionHighlightBar);
+
 function setHighlightLevel(val) {
   highlightLevel = Math.max(0, Math.min(100, Math.round(val)));
   highlightOn = highlightLevel > 0;
@@ -2391,8 +2398,14 @@ function setHighlightLevel(val) {
   if (slider) slider.value = highlightLevel;
   var label = document.getElementById('highlightValue');
   if (label) label.textContent = highlightLevel === 0 ? 'Off' : highlightLevel + '%';
+  positionHighlightBar();
   pushSettings();
 }
+
+// Keep highlight bar aligned on resize
+window.addEventListener('resize', positionHighlightBar);
+// Position once on load
+positionHighlightBar();
 
 function toggleHighlight() {
   // Keyboard shortcut: toggle between 0 and 50%
