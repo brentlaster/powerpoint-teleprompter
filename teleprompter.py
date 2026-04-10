@@ -1479,14 +1479,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .scroll-indicator .scroll-arrow {
     font-size: 1.4rem;
     color: var(--dim);
-    animation: scroll-bounce 1.5s ease-in-out infinite;
-  }
-  @keyframes scroll-bounce {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(5px); }
-  }
-  .scroll-indicator.at-bottom .scroll-arrow {
-    display: none;
   }
 
   /* Highlight slider styling in control panel */
@@ -2028,25 +2020,42 @@ function updateScrollIndicator() {
   var tp = document.getElementById('teleprompter');
   var indicator = document.getElementById('scrollIndicator');
   var pctEl = document.getElementById('scrollPct');
+  var arrowEl = indicator.querySelector('.scroll-arrow');
 
-  // Total scrollable distance, minus the 100vh bottom padding
-  // (we only care about real content, not the empty scroll-past-end zone)
+  // Measure the actual text content height (excluding the 100vh padding-bottom).
+  // Get the bounding rect of the last real element inside scriptContent.
   var innerEl = document.getElementById('scriptContent');
-  var contentHeight = innerEl.scrollHeight - window.innerHeight;  // actual content height minus one viewport
-  if (contentHeight <= 0) contentHeight = 1;  // avoid division by zero
+  var children = innerEl.children;
+  var realContentBottom = 0;
+  for (var i = children.length - 1; i >= 0; i--) {
+    var child = children[i];
+    // Skip the waiting message if hidden
+    if (child.id === 'waitingMsg' && child.style.display === 'none') continue;
+    var rect = child.getBoundingClientRect();
+    if (rect.height > 0) {
+      // Get the bottom of this element relative to the scroll container
+      realContentBottom = child.offsetTop + child.offsetHeight;
+      break;
+    }
+  }
 
+  var viewportHeight = tp.clientHeight;
   var scrollPos = tp.scrollTop;
-  var remaining = Math.max(0, contentHeight - scrollPos);
-  var pct = Math.round((remaining / contentHeight) * 100);
 
-  if (contentHeight <= 10 || pct <= 0) {
-    // No meaningful content to scroll or fully scrolled
+  if (realContentBottom <= viewportHeight) {
+    // All text fits on screen — no indicator needed
     indicator.classList.remove('visible');
-    indicator.classList.add('at-bottom');
   } else {
+    // How far through the real content have we scrolled?
+    // At top: scrollPos=0 → seen one viewport worth → pct = viewportHeight/realContentBottom
+    // At bottom of real content: scrollPos >= realContentBottom - viewportHeight → 100%
+    var maxScroll = realContentBottom - viewportHeight;
+    var pct = Math.round((scrollPos / maxScroll) * 100);
+    pct = Math.max(0, Math.min(100, pct));
     indicator.classList.add('visible');
-    indicator.classList.remove('at-bottom');
-    pctEl.textContent = pct + '% ▼';
+    pctEl.textContent = pct + '%';
+    // Hide the down arrow when we've reached the end of real content
+    arrowEl.style.display = pct >= 100 ? 'none' : '';
   }
 }
 

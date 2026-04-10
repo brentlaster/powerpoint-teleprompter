@@ -32,7 +32,7 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 - **Portrait mode** -- optimized vertical layout with a live slide preview panel at the bottom, ideal for a portrait-oriented second monitor
 - **Live slide preview** (macOS) -- captures a screenshot of the display running PowerPoint every 2 seconds (and immediately on slide change) for the portrait mode preview panel; includes a display picker for multi-monitor setups
 - **Highlight bar** -- adjustable-opacity yellow highlight band at the top of the teleprompter to mark your reading position; controlled via slider on the Controls panel or phone remote
-- **Scroll progress indicator** -- a percentage and down-arrow on the left edge shows how much text remains below the viewport, so you never miss content by forgetting to scroll
+- **Scroll progress indicator** -- a percentage and down-arrow on the left edge shows how far through the current slide's script you've read; only appears when text overflows the screen
 - **Scroll past end** -- text can be scrolled completely off the top of the screen, so you're never stuck with text anchored at the bottom
 - **Demo Mode** (macOS) -- one-tap switch between your PowerPoint slideshow and a Terminal window for live coding demos, then back again on the same slide
 - **Expandable Q&A index** -- add a collapsible Q&A section to your Questions slide using HTML `<details>`/`<summary>` tags in your script
@@ -152,7 +152,7 @@ On multi-monitor setups, the **Capture** control in the Controls panel lets you 
 
 ### Scroll Progress Indicator
 
-A small indicator on the left edge of the screen shows how much script text remains below the current viewport. It displays a percentage (e.g., "72% ▼") with a gently bouncing down arrow. The indicator fades out automatically when all text is visible or you've scrolled to the bottom. It reappears whenever a new slide loads with more text than fits on screen.
+When a slide has more script text than fits on screen, a small indicator appears on the left edge showing how far through it you've read (e.g., "33%" at the top, "100%" at the bottom). A down arrow appears alongside the percentage when there's still text below. The indicator is hidden entirely when all text fits on screen without scrolling.
 
 ### Highlight Bar
 
