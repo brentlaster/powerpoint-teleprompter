@@ -134,6 +134,7 @@ All display changes made on the phone are applied to the teleprompter in real ti
 | **Width** | 600 -- 3000px | 1800px | Max width of the text column |
 | **Spacing** | -4 -- 24px | 0px | Extra space between words |
 | **Highlight Bar** | 0 -- 100% | Off (0%) | Yellow highlight band at top of screen; slide to adjust opacity |
+| **HL Lines** | 1 -- 8 | 3 | Number of text lines the highlight bar covers |
 | **Mirror** | On / Off | Off | Horizontal flip for physical teleprompter rigs |
 
 ## Teleprompter Window Controls
@@ -156,7 +157,7 @@ When a slide has more script text than fits on screen, an indicator appears on t
 
 ### Highlight Bar
 
-The highlight bar places a yellow semi-transparent band over the first few lines of text in the teleprompter area. It tracks your scroll position so the highlighted region always covers the topmost visible text. Use the slider in the Controls panel (or phone remote) to adjust the intensity from 0% (off) to 100% (full opacity). Press `H` to toggle it on/off via keyboard (toggles between 0% and 50%).
+The highlight bar places a yellow semi-transparent band over the first few lines of text in the teleprompter area. It tracks your scroll position so the highlighted region always covers the topmost visible text. Use the slider in the Controls panel (or phone remote) to adjust the intensity from 0% (off) to 100% (full opacity). The **HL Lines** control adjusts how many lines of text the bar covers (1--8, default 3). Press `H` to toggle it on/off via keyboard (toggles between 0% and 50%).
 
 ### Keyboard Shortcuts
 

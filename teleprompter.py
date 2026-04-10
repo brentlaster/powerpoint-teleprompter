@@ -791,7 +791,7 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                 with settings_lock:
                     for key in ("fontSize", "textWidth", "wordSpacing",
                                 "autoScroll", "scrollSpeed", "mirror",
-                                "highlightLevel"):
+                                "highlightLevel", "highlightLines"):
                         if key in updates:
                             display_settings[key] = updates[key]
                     display_settings["settingsVersion"] += 1
@@ -1128,6 +1128,12 @@ REMOTE_PAGE = r"""<!DOCTYPE html>
   <input type="range" min="0" max="100" value="0" id="highlightRemoteSlider"
     style="width:100%;accent-color:#f0c040;height:36px;" />
 </div>
+<div class="ctrl-row" style="margin-top:4px;">
+  <span style="flex:1;font-size:0.95rem;color:#aaa;">HL Lines</span>
+  <button class="ctrl-btn" ontouchend="adjHlLines(-1,event)" onclick="adjHlLines(-1,event)">-</button>
+  <span id="hlLinesRemoteVal" style="min-width:28px;text-align:center;font-size:1.1rem;">3</span>
+  <button class="ctrl-btn" ontouchend="adjHlLines(1,event)" onclick="adjHlLines(1,event)">+</button>
+</div>
 
 <div class="status-bar" id="statusBar">Connecting...</div>
 
@@ -1250,6 +1256,8 @@ function updateUI() {
   var hl = settings.highlightLevel || 0;
   if (hlSlider && parseInt(hlSlider.value) !== hl) hlSlider.value = hl;
   if (hlVal) hlVal.textContent = hl === 0 ? 'Off' : hl + '%';
+  var hlLinesVal = document.getElementById('hlLinesRemoteVal');
+  if (hlLinesVal) hlLinesVal.textContent = settings.highlightLines || 3;
 }
 
 function poll() {
@@ -1293,6 +1301,15 @@ poll();
 document.getElementById('highlightRemoteSlider').addEventListener('input', function() {
   postSettings({ highlightLevel: parseInt(this.value) });
 });
+
+function adjHlLines(delta, e) {
+  stopEvent(e);
+  var cur = settings.highlightLines || 3;
+  var next = Math.max(1, Math.min(8, cur + delta));
+  settings.highlightLines = next;
+  document.getElementById('hlLinesRemoteVal').textContent = next;
+  postSettings({ highlightLines: next });
+}
 
 // ── Keep screen awake ──
 // Method 1: Wake Lock API (modern browsers)
@@ -1439,8 +1456,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     top: 0;
     left: 0;
     right: 0;
-    height: 4.2em;
-    margin-bottom: -4.2em;  /* overlay — don't push content down */
+    height: 5.7em;       /* default 3 lines × 1.9 line-height; overridden by JS */
+    margin-bottom: -5.7em;
     background: rgba(255, 245, 140, var(--hl-opacity, 0));
     border-bottom: 2px solid rgba(255, 230, 50, calc(var(--hl-opacity, 0) * 2.5));
     pointer-events: none;
@@ -1925,6 +1942,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div style="padding:0 18px 8px;">
         <input type="range" min="0" max="100" value="0" class="cp-highlight-slider" id="highlightSlider" />
       </div>
+      <div class="cp-row">
+        <span class="cp-label">HL Lines</span>
+        <div class="cp-btn-group">
+          <button class="cp-btn" onclick="changeHighlightLines(-1)">&#9664;</button>
+          <span class="cp-value" id="hlLinesValue">3</span>
+          <button class="cp-btn" onclick="changeHighlightLines(1)">&#9654;</button>
+        </div>
+      </div>
 
       <!-- Demo mode toggle -->
       <button class="demo-toggle" id="demoToggleBtn">
@@ -2096,7 +2121,8 @@ function pushSettings() {
       textWidth: textWidth,
       wordSpacing: wordSpacing,
       mirror: mirrorOn,
-      highlightLevel: highlightLevel
+      highlightLevel: highlightLevel,
+      highlightLines: highlightLines
     })
   }).catch(function() {});
 }
@@ -2126,6 +2152,10 @@ function applyServerSettings(s) {
   }
   if (typeof s.highlightLevel !== 'undefined' && s.highlightLevel !== highlightLevel) {
     setHighlightLevel(s.highlightLevel);
+  }
+  if (typeof s.highlightLines !== 'undefined' && s.highlightLines !== highlightLines) {
+    highlightLines = s.highlightLines;
+    applyHighlightLines();
   }
 }
 
@@ -2369,8 +2399,31 @@ fetch('/api/slide-image-debug').then(function(r) { return r.json(); }).then(func
 // ── Highlight bar ──
 var highlightOn = false;
 var highlightLevel = 0;  // 0-100
+var highlightLines = 3;  // number of text lines the bar covers (1-8)
 
-// Highlight bar is position:sticky inside the teleprompter — no JS positioning needed.
+// Highlight bar uses position:sticky inside the teleprompter — no JS positioning needed.
+
+function applyHighlightLines() {
+  // Each line of text is roughly 1.4em tall (font-size × line-height ~1.9,
+  // but the bar covers from the top of the first line to the bottom of the Nth).
+  // Use 1.9em per line to match the teleprompter's line-height.
+  var h = (highlightLines * 1.9) + 'em';
+  var bar = document.getElementById('highlightBar');
+  if (bar) {
+    bar.style.height = h;
+    bar.style.marginBottom = '-' + h;
+  }
+  var label = document.getElementById('hlLinesValue');
+  if (label) label.textContent = highlightLines;
+}
+
+function changeHighlightLines(delta) {
+  highlightLines = Math.max(1, Math.min(8, highlightLines + delta));
+  applyHighlightLines();
+  pushSettings();
+}
+
+applyHighlightLines();
 
 function setHighlightLevel(val) {
   highlightLevel = Math.max(0, Math.min(100, Math.round(val)));
