@@ -195,6 +195,9 @@ def _receive_slide(idx, tot):
     if tot > 0:
         total_slides = tot
     slideshow_active = True
+    # Trigger immediate screenshot for portrait preview
+    if platform.system() == "Darwin":
+        threading.Thread(target=_capture_slideshow_screenshot, daemon=True).start()
 
 
 def _receive_stopped():
@@ -297,103 +300,115 @@ def _ppt_applescript(action, deck_path=None):
         return False, str(e)
 
 
-def _capture_slideshow_screenshot():
-    """Capture a screenshot of the PowerPoint slideshow window.
+_screenshot_display = None  # cached: integer display number for -D flag
 
-    Uses screencapture with the window ID of the slideshow window.
-    Updates live_screenshot_path with the path to the latest screenshot.
+
+def _detect_display_count():
+    """Return the number of connected displays using system_profiler."""
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType"],
+            capture_output=True, text=True, timeout=5
+        )
+        # Count lines containing "Resolution:" — one per display
+        count = sum(1 for line in result.stdout.splitlines() if "Resolution:" in line)
+        return max(count, 1)
+    except Exception:
+        return 1
+
+
+def _try_screencapture(cmd, tmp_write, tmp_path):
+    """Run a screencapture command. Returns True if a valid image was produced."""
+    try:
+        if os.path.exists(tmp_write):
+            os.unlink(tmp_write)
+        result = subprocess.run(cmd, capture_output=True, timeout=5)
+        if result.returncode == 0 and os.path.exists(tmp_write):
+            fsize = os.path.getsize(tmp_write)
+            if fsize > 100:
+                os.replace(tmp_write, tmp_path)
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _set_screenshot_display(display_num):
+    """Set which display to capture for the slide preview. None = auto-detect."""
+    global _screenshot_display
+    _screenshot_display = display_num
+    label = "auto-detect" if display_num is None else f"display {display_num}"
+    print(f"  Screenshot display set to: {label}")
+
+
+def _capture_slideshow_screenshot():
+    """Capture a screenshot of the configured display.
+
+    Uses _screenshot_display if set (via Controls panel or auto-detect).
+    Auto-detection tries display 2 first, then 3, etc., then 1 as fallback.
     """
-    global live_screenshot_path
+    global live_screenshot_path, _screenshot_display
     if platform.system() != "Darwin":
         return
 
     import tempfile
-
-    # Get the window ID of the PowerPoint slideshow window
-    script = (
-        'tell application "System Events"\n'
-        '  tell process "Microsoft PowerPoint"\n'
-        '    repeat with w in windows\n'
-        '      set wName to name of w\n'
-        '      -- Slideshow windows typically have "Slide Show" in name or are full-screen\n'
-        '      if wName contains "Slide Show" or wName contains "PowerPoint" then\n'
-        '        return id of w as string\n'
-        '      end if\n'
-        '    end repeat\n'
-        '  end tell\n'
-        'end tell'
-    )
-
-    # Simpler approach: just capture the frontmost PowerPoint window during slideshow
     tmp_path = os.path.join(tempfile.gettempdir(), "teleprompter_live.jpg")
+    tmp_write = tmp_path + ".tmp"
 
-    try:
-        # Use screencapture to capture the PowerPoint slideshow
-        # -l flag captures a specific window by ID, but we'll use a simpler approach:
-        # capture the screen where the slideshow is running
-        result = subprocess.run(
-            ["screencapture", "-x", "-t", "jpg", "-R", "0,0,0,0", tmp_path],
-            capture_output=True, timeout=5, text=True
-        )
-        # Better approach: use AppleScript to get bounds and capture
-        # For now, use a direct approach - capture the main display
-        # where PowerPoint slideshow typically runs
+    # If we already know which display to use, use it
+    if _screenshot_display is not None:
+        if _try_screencapture(
+            ["screencapture", "-x", "-t", "jpg", "-D", str(_screenshot_display), tmp_write],
+            tmp_write, tmp_path
+        ):
+            with live_screenshot_lock:
+                live_screenshot_path = tmp_path
+        return
 
-        # Get the slideshow window bounds via AppleScript
-        bounds_script = (
-            'tell application "System Events"\n'
-            '  tell process "Microsoft PowerPoint"\n'
-            '    if (count of windows) > 0 then\n'
-            '      set w to window 1\n'
-            '      set {x1, y1} to position of w\n'
-            '      set {w1, h1} to size of w\n'
-            '      return (x1 as string) & "," & (y1 as string) & "," & (w1 as string) & "," & (h1 as string)\n'
-            '    end if\n'
-            '  end tell\n'
-            'end tell'
-        )
-        bounds_result = subprocess.run(
-            ["osascript", "-e", bounds_script],
-            capture_output=True, timeout=5, text=True
-        )
+    # Auto-detect: try each display, preferring non-main (display 2+)
+    num_displays = _detect_display_count()
+    print(f"  Detecting displays: {num_displays} found")
 
-        if bounds_result.returncode == 0 and bounds_result.stdout.strip():
-            parts = bounds_result.stdout.strip().split(",")
-            if len(parts) == 4:
-                x, y, w, h = parts
-                rect = f"{x},{y},{int(x)+int(w)},{int(y)+int(h)}"
-                subprocess.run(
-                    ["screencapture", "-x", "-t", "jpg", "-R", rect, tmp_path],
-                    capture_output=True, timeout=5
-                )
-                with live_screenshot_lock:
-                    live_screenshot_path = tmp_path
-                return
+    # Try secondary displays first (2, 3, ...), then main (1) as fallback
+    display_order = list(range(2, num_displays + 1)) + [1]
+    for d in display_order:
+        if _try_screencapture(
+            ["screencapture", "-x", "-t", "jpg", "-D", str(d), tmp_write],
+            tmp_write, tmp_path
+        ):
+            _screenshot_display = d
+            with live_screenshot_lock:
+                live_screenshot_path = tmp_path
+            label = "secondary" if d > 1 else "main (single display)"
+            print(f"  Using display {d} ({label}) for slide preview")
+            return
 
-        # Fallback: capture the entire main screen
-        subprocess.run(
-            ["screencapture", "-x", "-t", "jpg", tmp_path],
-            capture_output=True, timeout=5
-        )
-        with live_screenshot_lock:
-            live_screenshot_path = tmp_path
-
-    except Exception:
-        pass
+    print("  screencapture: all displays failed")
 
 
 def _run_screenshot_loop():
-    """Background loop that captures slideshow screenshots every 1.5 seconds."""
+    """Background loop that captures slideshow screenshots every 2 seconds."""
+    global _screenshot_display
     import time as _time
+    capture_count = 0
     while True:
-        _time.sleep(1.5)
+        _time.sleep(2)
         if slideshow_active:
             _capture_slideshow_screenshot()
+            capture_count += 1
+            if capture_count <= 3:
+                with live_screenshot_lock:
+                    path = live_screenshot_path
+                if path and os.path.exists(path):
+                    fsize = os.path.getsize(path)
+                    print(f"  Screenshot #{capture_count}: {fsize} bytes (display={_screenshot_display})")
+                else:
+                    print(f"  Screenshot #{capture_count}: FAILED - no file produced")
         else:
-            # Clear screenshot when slideshow is not active
             with live_screenshot_lock:
-                global live_screenshot_path
                 live_screenshot_path = None
+            _screenshot_display = None  # re-detect next slideshow
+            capture_count = 0
 
 
 def _demo_toggle():
@@ -662,6 +677,8 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
             if ok and result and "/" in result:
                 idx, tot = result.split("/", 1)
                 _activate_slideshow(int(idx))
+                # Trigger immediate screenshot so portrait preview updates quickly
+                threading.Thread(target=_capture_slideshow_screenshot, daemon=True).start()
             self._json_response({"ok": ok, "error": result if not ok else None})
 
         elif self.path == "/api/ppt/prev":
@@ -669,6 +686,7 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
             if ok and result and "/" in result:
                 idx, tot = result.split("/", 1)
                 _activate_slideshow(int(idx))
+                threading.Thread(target=_capture_slideshow_screenshot, daemon=True).start()
             self._json_response({"ok": ok, "error": result if not ok else None})
 
         elif self.path == "/api/ppt/start":
@@ -715,20 +733,48 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                 "available": demo_script is not None,
             })
 
-        elif self.path == "/api/slide-image":
+        elif self.path == "/api/slide-image-debug":
+            # Debug endpoint to check screenshot pipeline status
+            import tempfile
+            tmp_path = os.path.join(tempfile.gettempdir(), "teleprompter_live.jpg")
+            with live_screenshot_lock:
+                current_path = live_screenshot_path
+            info = {
+                "slideshow_active": slideshow_active,
+                "live_screenshot_path": current_path,
+                "tmp_path_exists": os.path.exists(tmp_path),
+                "tmp_path_size": os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0,
+                "platform": platform.system(),
+                "capture_display": _screenshot_display,
+                "display_count": _detect_display_count(),
+            }
+            self._json_response(info)
+
+        elif self.path.startswith("/api/slide-image"):
             # Serve live screenshot of the PowerPoint slideshow
             with live_screenshot_lock:
                 path = live_screenshot_path
-            if path and os.path.exists(path):
-                self.send_response(200)
-                self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Cache-Control", "no-cache, no-store")
-                self.end_headers()
-                with open(path, "rb") as f:
-                    self.wfile.write(f.read())
-            else:
+            try:
+                if path:
+                    with open(path, "rb") as f:
+                        img_data = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(img_data)))
+                    self.send_header("Cache-Control", "no-cache, no-store")
+                    self.end_headers()
+                    self.wfile.write(img_data)
+                else:
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    msg = f"No screenshot available. active={slideshow_active}, path={path}"
+                    self.wfile.write(msg.encode())
+            except (FileNotFoundError, OSError):
                 self.send_response(404)
+                self.send_header("Content-Type", "text/plain")
                 self.end_headers()
+                self.wfile.write(b"Screenshot file was removed during read")
 
         else:
             self.send_response(404)
@@ -744,7 +790,8 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
 
                 with settings_lock:
                     for key in ("fontSize", "textWidth", "wordSpacing",
-                                "autoScroll", "scrollSpeed", "mirror"):
+                                "autoScroll", "scrollSpeed", "mirror",
+                                "highlightLevel"):
                         if key in updates:
                             display_settings[key] = updates[key]
                     display_settings["settingsVersion"] += 1
@@ -754,6 +801,24 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 self.send_response(400)
                 self.end_headers()
+
+        elif self.path == "/api/screenshot-display":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body)
+                d = int(data.get("display", 0))
+                if d == 0:
+                    # Reset to auto-detect
+                    _set_screenshot_display(None)
+                else:
+                    _set_screenshot_display(d)
+                # Trigger an immediate capture with the new display
+                threading.Thread(target=_capture_slideshow_screenshot, daemon=True).start()
+                self._json_response({"ok": True, "display": d})
+            except Exception as e:
+                self._json_response({"ok": False, "error": str(e)}, 400)
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -1057,6 +1122,13 @@ REMOTE_PAGE = r"""<!DOCTYPE html>
   <button class="ctrl-btn" ontouchend="adjWordSp(2,event)" onclick="adjWordSp(2,event)">+</button>
 </div>
 
+<!-- Highlight bar -->
+<div class="section-label">Highlight Bar <span id="hlRemoteVal" style="float:right;opacity:0.7;">Off</span></div>
+<div class="ctrl-row">
+  <input type="range" min="0" max="100" value="0" id="highlightRemoteSlider"
+    style="width:100%;accent-color:#f0c040;height:36px;" />
+</div>
+
 <div class="status-bar" id="statusBar">Connecting...</div>
 
 <script>
@@ -1173,6 +1245,11 @@ function updateUI() {
   document.getElementById('fontVal').textContent = (settings.fontSize || 2.8).toFixed(1);
   document.getElementById('widthVal').textContent = (settings.textWidth || 1800);
   document.getElementById('wordSpVal').textContent = (settings.wordSpacing || 0) + 'px';
+  var hlSlider = document.getElementById('highlightRemoteSlider');
+  var hlVal = document.getElementById('hlRemoteVal');
+  var hl = settings.highlightLevel || 0;
+  if (hlSlider && parseInt(hlSlider.value) !== hl) hlSlider.value = hl;
+  if (hlVal) hlVal.textContent = hl === 0 ? 'Off' : hl + '%';
 }
 
 function poll() {
@@ -1211,6 +1288,11 @@ function poll() {
 
 setInterval(poll, 500);
 poll();
+
+// ── Highlight slider on remote ──
+document.getElementById('highlightRemoteSlider').addEventListener('input', function() {
+  postSettings({ highlightLevel: parseInt(this.value) });
+});
 
 // ── Keep screen awake ──
 // Method 1: Wake Lock API (modern browsers)
@@ -1336,16 +1418,44 @@ HTML_PAGE = r"""<!DOCTYPE html>
     padding: 48px 40px;
     line-height: 1.9;
     font-size: 2.8rem;
+    position: relative;
   }
   .teleprompter .inner {
     max-width: 1800px;
     margin: 0 auto;
     transition: opacity 0.12s;
+    padding-bottom: 100vh;  /* allows scrolling text fully off the top */
   }
   .teleprompter p { margin-bottom: 1.1em; }
   .teleprompter strong { color: var(--accent); }
   .teleprompter em { color: #f0c040; }
   .teleprompter.mirror { transform: scaleX(-1); }
+
+  /* Highlight bar at top of teleprompter */
+  .highlight-bar {
+    display: none;
+    position: sticky;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3.8em;
+    background: rgba(255, 245, 140, var(--hl-opacity, 0));
+    border-bottom: 2px solid rgba(255, 230, 50, calc(var(--hl-opacity, 0) * 2.5));
+    pointer-events: none;
+    z-index: 5;
+    margin-bottom: -3.8em;
+  }
+  body.highlight-on .highlight-bar {
+    display: block;
+  }
+
+  /* Highlight slider styling in control panel */
+  .cp-highlight-slider {
+    width: 100%;
+    margin: 2px 0;
+    accent-color: #f0c040;
+    cursor: pointer;
+  }
 
   /* Q&A expand/collapse index */
   .qa-index { margin-top: 0.5em; }
@@ -1710,6 +1820,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
 <div class="main">
   <div class="teleprompter" id="teleprompter">
+    <div class="highlight-bar" id="highlightBar"></div>
     <div class="inner" id="scriptContent">
       <div class="waiting-msg" id="waitingMsg">
         <div class="icon">&#x1F4E1;</div>
@@ -1749,6 +1860,25 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <div class="cp-btn-group">
           <button class="cp-btn" id="portraitBtn">Off</button>
         </div>
+      </div>
+
+      <!-- Capture display -->
+      <div class="cp-row">
+        <span class="cp-label">Capture</span>
+        <div class="cp-btn-group">
+          <button class="cp-btn" id="dispPrev" style="font-size:1.1rem;">&#x25C0;</button>
+          <span class="cp-value" id="dispValue">Auto</span>
+          <button class="cp-btn" id="dispNext" style="font-size:1.1rem;">&#x25B6;</button>
+        </div>
+      </div>
+
+      <!-- Highlight bar -->
+      <div class="cp-row" style="flex-wrap:wrap;">
+        <span class="cp-label">Highlight</span>
+        <span class="cp-value" id="highlightValue" style="margin-left:auto;font-size:0.85rem;">Off</span>
+      </div>
+      <div style="padding:0 18px 8px;">
+        <input type="range" min="0" max="100" value="0" class="cp-highlight-slider" id="highlightSlider" />
       </div>
 
       <!-- Demo mode toggle -->
@@ -1816,6 +1946,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <div class="footer" id="footer">
   <span><kbd>D</kbd> Demo mode</span>
   <span><kbd>P</kbd> Portrait</span>
+  <span><kbd>H</kbd> Highlight</span>
   <span><kbd>T</kbd> Timer</span>
   <span>Open <strong>/remote</strong> on your phone to control without touching this screen</span>
   <span id="modeHint">Syncs via VBA</span>
@@ -1872,7 +2003,8 @@ function pushSettings() {
       fontSize: fontSize,
       textWidth: textWidth,
       wordSpacing: wordSpacing,
-      mirror: mirrorOn
+      mirror: mirrorOn,
+      highlightLevel: highlightLevel
     })
   }).catch(function() {});
 }
@@ -1899,6 +2031,9 @@ function applyServerSettings(s) {
     mirrorOn = s.mirror;
     document.getElementById('teleprompter').classList.toggle('mirror', mirrorOn);
     document.getElementById('mirrorBtn').textContent = mirrorOn ? 'On' : 'Off';
+  }
+  if (typeof s.highlightLevel !== 'undefined' && s.highlightLevel !== highlightLevel) {
+    setHighlightLevel(s.highlightLevel);
   }
 }
 
@@ -2111,6 +2246,55 @@ function togglePortrait() {
   }
 }
 
+// ── Capture display picker ──
+var captureDisplay = 0;  // 0 = auto
+var maxDisplays = 3;     // updated from debug endpoint
+
+function setCaptureDisplay(d) {
+  captureDisplay = d;
+  document.getElementById('dispValue').textContent = d === 0 ? 'Auto' : 'Display ' + d;
+  fetch('/api/screenshot-display', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display: d })
+  }).catch(function(){});
+}
+
+function changeDisplay(delta) {
+  var next = captureDisplay + delta;
+  if (next < 0) next = maxDisplays;
+  if (next > maxDisplays) next = 0;
+  setCaptureDisplay(next);
+}
+
+// Fetch display count once
+fetch('/api/slide-image-debug').then(function(r) { return r.json(); }).then(function(data) {
+  if (data.display_count) maxDisplays = data.display_count;
+}).catch(function(){});
+
+// ── Highlight bar ──
+var highlightOn = false;
+var highlightLevel = 0;  // 0-100
+
+function setHighlightLevel(val) {
+  highlightLevel = Math.max(0, Math.min(100, Math.round(val)));
+  highlightOn = highlightLevel > 0;
+  document.body.classList.toggle('highlight-on', highlightOn);
+  // Map 0-100 to opacity 0.0-0.45 for the yellow tint
+  var opacity = (highlightLevel / 100) * 0.45;
+  document.documentElement.style.setProperty('--hl-opacity', opacity.toFixed(3));
+  var slider = document.getElementById('highlightSlider');
+  if (slider) slider.value = highlightLevel;
+  var label = document.getElementById('highlightValue');
+  if (label) label.textContent = highlightLevel === 0 ? 'Off' : highlightLevel + '%';
+  pushSettings();
+}
+
+function toggleHighlight() {
+  // Keyboard shortcut: toggle between 0 and 50%
+  setHighlightLevel(highlightOn ? 0 : 50);
+}
+
 var slideImgTimer = null;
 function updateSlidePanel(data) {
   var numEl = document.getElementById('slidePanelNum');
@@ -2164,6 +2348,7 @@ document.addEventListener('keydown', function(e) {
     case 't': case 'T': toggleTimer(); break;
     case 'm': case 'M': toggleMirror(); break;
     case 'p': case 'P': togglePortrait(); break;
+    case 'h': case 'H': toggleHighlight(); break;
     case 'd': case 'D': toggleDemoMode(); break;
   }
 });
@@ -2199,6 +2384,11 @@ addTouchButton('wordSpUp', function() { changeWordSpacing(WORDSP_STEP); });
 addTouchButton('wordSpDown', function() { changeWordSpacing(-WORDSP_STEP); });
 addTouchButton('mirrorBtn', toggleMirror);
 addTouchButton('portraitBtn', togglePortrait);
+addTouchButton('dispPrev', function() { changeDisplay(-1); });
+addTouchButton('dispNext', function() { changeDisplay(1); });
+document.getElementById('highlightSlider').addEventListener('input', function() {
+  setHighlightLevel(parseInt(this.value));
+});
 addTouchButton('panelPrevSlide', function() {
   fetch('/api/ppt/prev').catch(function(){});
 });
@@ -2405,6 +2595,8 @@ def main():
 
     # ── Live screenshot capture loop ──
     if platform.system() == "Darwin":
+        print("Live slide preview enabled (captures PowerPoint window every 2s)")
+        print("  Note: macOS may require Screen Recording permission for Terminal/Python")
         threading.Thread(target=_run_screenshot_loop, daemon=True).start()
 
     # ── Start HTTP server ──

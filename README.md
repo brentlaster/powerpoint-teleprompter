@@ -28,6 +28,11 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 
 - **Real-time sync** -- VBA macro notifies the teleprompter on every slide change
 - **Phone remote control** -- adjust display, scroll text, and advance slides from your phone
+- **Slide control buttons** -- Prev/Next Slide and Start Slideshow buttons on both the main page Controls panel and the phone remote, so you can advance slides without touching PowerPoint
+- **Portrait mode** -- optimized vertical layout with a live slide preview panel at the bottom, ideal for a portrait-oriented second monitor
+- **Live slide preview** (macOS) -- captures a screenshot of the display running PowerPoint every 2 seconds (and immediately on slide change) for the portrait mode preview panel; includes a display picker for multi-monitor setups
+- **Highlight bar** -- adjustable-opacity yellow highlight band at the top of the teleprompter to mark your reading position; controlled via slider on the Controls panel or phone remote
+- **Scroll past end** -- text can be scrolled completely off the top of the screen, so you're never stuck with text anchored at the bottom
 - **Demo Mode** (macOS) -- one-tap switch between your PowerPoint slideshow and a Terminal window for live coding demos, then back again on the same slide
 - **Expandable Q&A index** -- add a collapsible Q&A section to your Questions slide using HTML `<details>`/`<summary>` tags in your script
 - **Mirror mode** -- horizontal flip for physical teleprompter rigs
@@ -127,13 +132,26 @@ All display changes made on the phone are applied to the teleprompter in real ti
 | **Font** | 0.8 -- 6.0 | 2.8 | Font size in rem units |
 | **Width** | 600 -- 3000px | 1800px | Max width of the text column |
 | **Spacing** | -4 -- 24px | 0px | Extra space between words |
+| **Highlight Bar** | 0 -- 100% | Off (0%) | Yellow highlight band at top of screen; slide to adjust opacity |
 | **Mirror** | On / Off | Off | Horizontal flip for physical teleprompter rigs |
 
 ## Teleprompter Window Controls
 
-The teleprompter browser window has a collapsible floating control panel (bottom-right) with all the same controls as the phone remote, plus a scannable QR code for quick phone setup. Changes made here sync back to the phone. All buttons are touch-friendly (60px minimum) in case you use a touchscreen monitor.
+The teleprompter browser window has a collapsible floating control panel (bottom-right) with all the same controls as the phone remote, plus a scannable QR code for quick phone setup and Prev/Next Slide buttons. The Controls panel is scrollable if your window is too short to show everything. Changes made here sync back to the phone. All buttons are touch-friendly (60px minimum) in case you use a touchscreen monitor.
 
-**Note:** Touching the teleprompter screen may steal focus from PowerPoint and cause your clicker to stop working. Use the phone remote instead to avoid this issue.
+**Note:** Touching the teleprompter screen may steal focus from PowerPoint and cause your clicker to stop working. Use the phone remote instead to avoid this issue. See the Touchscreen Focus section below for details.
+
+### Portrait Mode
+
+Toggle Portrait mode from the Controls panel or press `P`. This switches the teleprompter to a vertical layout optimized for portrait-oriented monitors. A slide info panel appears at the bottom showing the current slide number/title, Prev/Next buttons, and a live screenshot preview of the PowerPoint slideshow (macOS only).
+
+The live preview captures the display running PowerPoint every 2 seconds and immediately on every slide change. It requires macOS **Screen Recording** permission for Terminal or Python (System Settings > Privacy & Security > Screen Recording).
+
+On multi-monitor setups, the **Capture** control in the Controls panel lets you select which display to capture. Use the left/right arrows to cycle through Auto (tries display 2 first), Display 1, Display 2, Display 3, etc. The display number is cached for the duration of the slideshow and resets when the slideshow ends.
+
+### Highlight Bar
+
+The highlight bar places a yellow semi-transparent band across the top of the teleprompter, highlighting whatever text is at your current scroll position. Use the slider in the Controls panel (or phone remote) to adjust the intensity from 0% (off) to 100% (full opacity). Press `H` to toggle it on/off via keyboard (toggles between 0% and 50%).
 
 ### Keyboard Shortcuts
 
@@ -144,6 +162,8 @@ These work when the teleprompter browser window has focus:
 | `+` / `=` | Increase font size |
 | `-` / `_` | Decrease font size |
 | `D` | Toggle demo mode (switch between slides and Terminal) |
+| `P` | Toggle portrait mode |
+| `H` | Toggle highlight bar (0% / 50%) |
 | `T` | Start / pause timer |
 | `M` | Toggle mirror mode |
 
@@ -291,6 +311,11 @@ cd ~/talks/keynote
 | `/api/scroll/up` | GET | Scroll teleprompter text up |
 | `/api/scroll/down` | GET | Scroll teleprompter text down |
 | `/api/scroll/top` | GET | Scroll teleprompter text to top |
+| `/api/ppt/start` | GET | Start PowerPoint slideshow (macOS, via AppleScript) |
+| `/api/ppt/stop` | GET | Stop PowerPoint slideshow (macOS, via AppleScript) |
+| `/api/slide-image` | GET | Live screenshot of the PowerPoint slideshow (JPEG) |
+| `/api/slide-image-debug` | GET | Debug info for the screenshot pipeline |
+| `/api/screenshot-display` | POST | Set which display to capture (JSON: `{"display": 3}`, 0 = auto) |
 | `/api/demo/toggle` | GET | Toggle demo mode (switch between slideshow and Terminal) |
 | `/api/demo/state` | GET | Current demo mode state and available demo script |
 | `/api/remote-url` | GET | Get the phone remote URL with LAN IP |
@@ -334,6 +359,18 @@ The teleprompter looks for a file matching `demo-*.py` in the same directory as 
 
 **Demo mode: Terminal doesn't appear over slideshow**
 macOS needs permission for Python to control Terminal under System Settings > Privacy & Security > Automation. Allow Python (or Terminal) to send events to other applications.
+
+**Portrait mode: no slide preview image**
+The live screenshot feature requires macOS Screen Recording permission. Go to System Settings > Privacy & Security > Screen Recording and ensure Terminal (or Python) is listed and enabled. You may need to restart Terminal after granting the permission. Visit `http://localhost:8765/api/slide-image-debug` while the slideshow is running to see diagnostic info about the screenshot pipeline.
+
+**Portrait mode: screenshot shows wrong display**
+By default, the teleprompter auto-detects and captures display 2 (assuming the teleprompter is on display 1). On setups with 3+ monitors, it may pick the wrong one. Use the **Capture** control in the Controls panel to cycle through displays until you see your PowerPoint slideshow. The selected display is cached for the rest of the slideshow session.
+
+**Start Slideshow button doesn't reappear when slideshow ends**
+A background thread checks PowerPoint's slideshow status every 3 seconds. If it detects the slideshow has ended, it resets the UI. Make sure PowerPoint is still running; the detection relies on AppleScript checking the slide show window count.
+
+**Touchscreen focus issues**
+Touching the teleprompter browser on a secondary touchscreen may not move macOS keyboard focus away from the primary screen. This is a macOS limitation -- the OS does not automatically switch focus between displays on touch input alone. Use the phone remote for all controls during a presentation to avoid focus conflicts with PowerPoint.
 
 **Port already in use**
 Another instance may be running. Kill it with `lsof -ti:8765 | xargs kill` or use `--port` to pick a different port.
