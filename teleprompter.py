@@ -1449,6 +1449,46 @@ HTML_PAGE = r"""<!DOCTYPE html>
     display: block;
   }
 
+  /* Scroll remaining indicator */
+  .scroll-indicator {
+    position: fixed;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    z-index: 20;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .scroll-indicator.visible {
+    opacity: 1;
+  }
+  .scroll-indicator .scroll-pct {
+    font-size: 0.9rem;
+    color: var(--dim);
+    font-weight: 600;
+    background: rgba(30, 30, 30, 0.7);
+    padding: 4px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .scroll-indicator .scroll-arrow {
+    font-size: 1.4rem;
+    color: var(--dim);
+    animation: scroll-bounce 1.5s ease-in-out infinite;
+  }
+  @keyframes scroll-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(5px); }
+  }
+  .scroll-indicator.at-bottom .scroll-arrow {
+    display: none;
+  }
+
   /* Highlight slider styling in control panel */
   .cp-highlight-slider {
     width: 100%;
@@ -1819,6 +1859,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <div class="progress"><div class="fill" id="progressFill"></div></div>
 
 <div class="main">
+  <div class="scroll-indicator" id="scrollIndicator">
+    <div class="scroll-pct" id="scrollPct"></div>
+    <div class="scroll-arrow">&#x25BC;</div>
+  </div>
   <div class="teleprompter" id="teleprompter">
     <div class="highlight-bar" id="highlightBar"></div>
     <div class="inner" id="scriptContent">
@@ -1978,6 +2022,37 @@ function applyScrollCommand(scrollData) {
     tp.scrollTo({ top: 0, behavior: 'smooth' });
   }
 }
+
+// ── Scroll remaining indicator ──
+function updateScrollIndicator() {
+  var tp = document.getElementById('teleprompter');
+  var indicator = document.getElementById('scrollIndicator');
+  var pctEl = document.getElementById('scrollPct');
+
+  // Total scrollable distance, minus the 100vh bottom padding
+  // (we only care about real content, not the empty scroll-past-end zone)
+  var innerEl = document.getElementById('scriptContent');
+  var contentHeight = innerEl.scrollHeight - window.innerHeight;  // actual content height minus one viewport
+  if (contentHeight <= 0) contentHeight = 1;  // avoid division by zero
+
+  var scrollPos = tp.scrollTop;
+  var remaining = Math.max(0, contentHeight - scrollPos);
+  var pct = Math.round((remaining / contentHeight) * 100);
+
+  if (contentHeight <= 10 || pct <= 0) {
+    // No meaningful content to scroll or fully scrolled
+    indicator.classList.remove('visible');
+    indicator.classList.add('at-bottom');
+  } else {
+    indicator.classList.add('visible');
+    indicator.classList.remove('at-bottom');
+    pctEl.textContent = pct + '% ▼';
+  }
+}
+
+document.getElementById('teleprompter').addEventListener('scroll', updateScrollIndicator);
+// Also update on window resize and after content changes
+window.addEventListener('resize', updateScrollIndicator);
 
 // ── Text width ──
 var textWidth = 1800;
@@ -2176,6 +2251,7 @@ async function pollState() {
         tp.scrollTo(0, 0);
         lastSlide = data.slide;
         if (!timerRunning && !timerElapsed) toggleTimer();
+        setTimeout(updateScrollIndicator, 50);  // update after DOM reflow
       }
       wasActive = true;
     } else {
@@ -2189,6 +2265,7 @@ async function pollState() {
           '<div class="waiting-msg"><div class="icon">&#x1F4E1;</div>' +
           '<p>' + (wasActive ? 'Slideshow ended.' : 'Waiting for slideshow...<br>Start your PowerPoint slideshow and the script will appear here.') + '</p></div>';
         lastSlide = -1;
+        document.getElementById('scrollIndicator').classList.remove('visible');
       }
     }
   } catch (e) { console.error('Poll error:', e); }

@@ -32,6 +32,7 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 - **Portrait mode** -- optimized vertical layout with a live slide preview panel at the bottom, ideal for a portrait-oriented second monitor
 - **Live slide preview** (macOS) -- captures a screenshot of the display running PowerPoint every 2 seconds (and immediately on slide change) for the portrait mode preview panel; includes a display picker for multi-monitor setups
 - **Highlight bar** -- adjustable-opacity yellow highlight band at the top of the teleprompter to mark your reading position; controlled via slider on the Controls panel or phone remote
+- **Scroll progress indicator** -- a percentage and down-arrow on the left edge shows how much text remains below the viewport, so you never miss content by forgetting to scroll
 - **Scroll past end** -- text can be scrolled completely off the top of the screen, so you're never stuck with text anchored at the bottom
 - **Demo Mode** (macOS) -- one-tap switch between your PowerPoint slideshow and a Terminal window for live coding demos, then back again on the same slide
 - **Expandable Q&A index** -- add a collapsible Q&A section to your Questions slide using HTML `<details>`/`<summary>` tags in your script
@@ -148,6 +149,10 @@ Toggle Portrait mode from the Controls panel or press `P`. This switches the tel
 The live preview captures the display running PowerPoint every 2 seconds and immediately on every slide change. It requires macOS **Screen Recording** permission for Terminal or Python (System Settings > Privacy & Security > Screen Recording).
 
 On multi-monitor setups, the **Capture** control in the Controls panel lets you select which display to capture. Use the left/right arrows to cycle through Auto (tries display 2 first), Display 1, Display 2, Display 3, etc. The display number is cached for the duration of the slideshow and resets when the slideshow ends.
+
+### Scroll Progress Indicator
+
+A small indicator on the left edge of the screen shows how much script text remains below the current viewport. It displays a percentage (e.g., "72% ▼") with a gently bouncing down arrow. The indicator fades out automatically when all text is visible or you've scrolled to the bottom. It reappears whenever a new slide loads with more text than fits on screen.
 
 ### Highlight Bar
 
