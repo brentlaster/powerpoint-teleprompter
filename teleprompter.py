@@ -113,6 +113,47 @@ display_settings = {
 }
 settings_lock = threading.Lock()
 
+# Path to persistent settings file (set at startup based on script location)
+_settings_file_path = None
+
+# Keys that we persist to disk (excludes volatile ones like settingsVersion)
+_PERSIST_KEYS = ("fontSize", "textWidth", "wordSpacing", "mirror",
+                 "highlightLevel", "highlightLines", "screenshotDisplay",
+                 "panelHeightPct")
+
+
+def _load_saved_settings():
+    """Load settings from the persistent JSON file, if it exists."""
+    if not _settings_file_path:
+        return
+    try:
+        with open(_settings_file_path, "r") as f:
+            saved = json.load(f)
+        with settings_lock:
+            for key in _PERSIST_KEYS:
+                if key in saved:
+                    display_settings[key] = saved[key]
+        print(f"Loaded saved settings from {_settings_file_path}")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"Warning: Could not load settings file: {e}")
+
+
+def _save_settings():
+    """Save current settings to the persistent JSON file."""
+    if not _settings_file_path:
+        return
+    try:
+        with settings_lock:
+            to_save = {k: display_settings[k] for k in _PERSIST_KEYS
+                       if k in display_settings}
+        with open(_settings_file_path, "w") as f:
+            json.dump(to_save, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Could not save settings file: {e}")
+
+
 # ── Scroll commands from remote ──
 # The remote posts scroll commands; the teleprompter polls and executes them.
 scroll_command = {"action": None, "version": 0}  # action: "up", "down", "top"
@@ -791,11 +832,15 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                 with settings_lock:
                     for key in ("fontSize", "textWidth", "wordSpacing",
                                 "autoScroll", "scrollSpeed", "mirror",
-                                "highlightLevel", "highlightLines"):
+                                "highlightLevel", "highlightLines",
+                                "panelHeightPct"):
                         if key in updates:
                             display_settings[key] = updates[key]
                     display_settings["settingsVersion"] += 1
                     result = dict(display_settings)
+
+                # Persist to disk in background (non-blocking)
+                threading.Thread(target=_save_settings, daemon=True).start()
 
                 self._json_response(result)
             except Exception:
@@ -813,6 +858,10 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                     _set_screenshot_display(None)
                 else:
                     _set_screenshot_display(d)
+                # Persist the display choice
+                with settings_lock:
+                    display_settings["screenshotDisplay"] = d
+                threading.Thread(target=_save_settings, daemon=True).start()
                 # Trigger an immediate capture with the new display
                 threading.Thread(target=_capture_slideshow_screenshot, daemon=True).start()
                 self._json_response({"ok": True, "display": d})
@@ -1561,15 +1610,35 @@ HTML_PAGE = r"""<!DOCTYPE html>
     flex-shrink: 0;
     background: #0d0d14;
     border-top: 2px solid var(--border);
-    padding: 16px 24px;
+    padding: 0 24px 16px;
+    position: relative;
   }
+  .slide-panel-drag {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 0 4px;
+    cursor: ns-resize;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .slide-panel-drag .drag-pill {
+    width: 48px;
+    height: 5px;
+    border-radius: 3px;
+    background: #555;
+    transition: background 0.15s;
+  }
+  .slide-panel-drag:hover .drag-pill,
+  .slide-panel-drag:active .drag-pill { background: #888; }
   .slide-panel-preview {
     text-align: center;
     margin-bottom: 10px;
   }
   .slide-panel-preview img {
     max-width: 100%;
-    max-height: 30vh;
+    max-height: var(--panel-img-max-h, 30vh);
     border-radius: 8px;
     border: 2px solid var(--border);
     background: #000;
@@ -2000,6 +2069,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
 <!-- Slide info panel (portrait mode) -->
 <div class="slide-panel" id="slidePanel">
+  <div class="slide-panel-drag" id="slidePanelDrag">
+    <div class="drag-pill"></div>
+  </div>
   <div class="slide-panel-preview" id="slidePanelPreview">
     <img id="slidePanelImg" alt="" />
   </div>
@@ -2157,6 +2229,17 @@ function applyServerSettings(s) {
     highlightLines = s.highlightLines;
     applyHighlightLines();
   }
+  if (typeof s.screenshotDisplay !== 'undefined' && s.screenshotDisplay !== captureDisplay) {
+    captureDisplay = s.screenshotDisplay;
+    document.getElementById('dispValue').textContent = captureDisplay === 0 ? 'Auto' : 'Display ' + captureDisplay;
+  }
+  if (typeof s.panelHeightPct !== 'undefined' && s.panelHeightPct > 0) {
+    var panel = document.getElementById('slidePanel');
+    var h = Math.round(window.innerHeight * s.panelHeightPct / 100);
+    panel.style.height = h + 'px';
+    var imgMaxH = Math.max(40, h - 100);
+    document.documentElement.style.setProperty('--panel-img-max-h', imgMaxH + 'px');
+  }
 }
 
 // ── Display helpers ──
@@ -2248,6 +2331,44 @@ document.getElementById('teleprompter').addEventListener('touchmove', function()
 document.getElementById('teleprompter').addEventListener('touchend', function(e) {
   if (e.target.closest('.control-panel')) return;
 }, { passive: true });
+
+// ── Mouse-drag-to-scroll (for touchscreens that macOS treats as mouse input) ──
+(function() {
+  var tp = document.getElementById('teleprompter');
+  var dragging = false;
+  var lastY = 0;
+  var dragStartY = 0;
+  var dragMoved = false;
+
+  tp.addEventListener('mousedown', function(e) {
+    // Only on the text area, not controls
+    if (e.target.closest('.control-panel') || e.target.closest('.slide-panel-drag')) return;
+    if (e.button !== 0) return;  // left button only
+    dragging = true;
+    dragMoved = false;
+    lastY = e.clientY;
+    dragStartY = e.clientY;
+    tp.style.cursor = 'grabbing';
+    e.preventDefault();  // prevent text selection while dragging
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!dragging) return;
+    var dy = lastY - e.clientY;  // positive = dragged up = scroll down
+    if (Math.abs(e.clientY - dragStartY) > 4) dragMoved = true;
+    tp.scrollTop += dy;
+    lastY = e.clientY;
+  });
+
+  document.addEventListener('mouseup', function() {
+    if (!dragging) return;
+    dragging = false;
+    tp.style.cursor = '';
+  });
+
+  // Show grab cursor on hover over the teleprompter text area
+  tp.style.cursor = 'grab';
+})();
 
 // ── Polling (also syncs server settings from remote) ──
 async function pollState() {
@@ -2546,6 +2667,69 @@ addTouchButton('panelNextSlide', function() {
 });
 addTouchButton('demoToggleBtn', toggleDemoMode);
 
+// ── Slide panel drag-to-resize (portrait mode) ──
+(function() {
+  var drag = document.getElementById('slidePanelDrag');
+  var panel = document.getElementById('slidePanel');
+  var dragging = false;
+  var startY = 0;
+  var startH = 0;
+  var MIN_H = 80;
+  var MAX_RATIO = 0.7;  // max 70% of window height
+
+  function getY(e) {
+    if (e.touches && e.touches.length) return e.touches[0].clientY;
+    return e.clientY;
+  }
+
+  function onStart(e) {
+    e.preventDefault();
+    dragging = true;
+    startY = getY(e);
+    startH = panel.offsetHeight;
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    var delta = startY - getY(e);  // dragging up = positive = bigger panel
+    var newH = Math.max(MIN_H, Math.min(window.innerHeight * MAX_RATIO, startH + delta));
+    panel.style.height = newH + 'px';
+    // Update the image max-height to fill available space
+    // Subtract roughly 100px for nav buttons, info text, drag handle
+    var imgMaxH = Math.max(40, newH - 100);
+    document.documentElement.style.setProperty('--panel-img-max-h', imgMaxH + 'px');
+  }
+
+  function onEnd() {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.body.style.webkitUserSelect = '';
+    // Save the panel height as a percentage of window for persistence
+    var pct = Math.round((panel.offsetHeight / window.innerHeight) * 100);
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ panelHeightPct: pct })
+    }).catch(function(){});
+  }
+
+  drag.addEventListener('mousedown', onStart);
+  drag.addEventListener('touchstart', onStart, { passive: false });
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchend', onEnd);
+
+  // Restore saved panel height
+  fetch('/api/settings', { method: 'GET' }).catch(function(){});
+})();
+
 // ── Collapsible panel (touch-safe) ──
 (function() {
   var hdr = document.getElementById('cpHeader');
@@ -2684,8 +2868,18 @@ def main():
     total_slides = len(script_sections)
     print(f"Loaded {total_slides} script sections from {script_path.name}")
 
-    # ── Auto-detect demo script in the same directory ──
+    # ── Load persistent settings ──
+    global _settings_file_path
     talk_dir = script_path.parent
+    _settings_file_path = str(talk_dir / ".teleprompter-settings.json")
+    _load_saved_settings()
+
+    # Apply saved screenshot display if present
+    saved_disp = display_settings.get("screenshotDisplay")
+    if saved_disp:
+        _set_screenshot_display(saved_disp if saved_disp != 0 else None)
+
+    # ── Auto-detect demo script in the same directory ──
     demo_files = sorted(talk_dir.glob("demo-*.py"))
     if demo_files:
         demo_script = str(demo_files[0])

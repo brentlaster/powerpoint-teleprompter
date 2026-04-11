@@ -37,6 +37,8 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 - **Demo Mode** (macOS) -- one-tap switch between your PowerPoint slideshow and a Terminal window for live coding demos, then back again on the same slide
 - **Expandable Q&A index** -- add a collapsible Q&A section to your Questions slide using HTML `<details>`/`<summary>` tags in your script
 - **Mirror mode** -- horizontal flip for physical teleprompter rigs
+- **Persistent settings** -- all display settings (font size, width, highlight, capture display, panel height, etc.) are saved to a `.teleprompter-settings.json` file next to your script and automatically restored on the next launch
+- **Resizable slide preview** -- in portrait mode, drag the pill handle at the top of the slide panel to make the screenshot preview larger or smaller; the size is saved across sessions
 - **Config file & launcher** -- point to your deck + script in a JSON file and launch everything with one command
 
 ## Requirements
@@ -149,7 +151,9 @@ Toggle Portrait mode from the Controls panel or press `P`. This switches the tel
 
 The live preview captures the display running PowerPoint every 2 seconds and immediately on every slide change. It requires macOS **Screen Recording** permission for Terminal or Python (System Settings > Privacy & Security > Screen Recording).
 
-On multi-monitor setups, the **Capture** control in the Controls panel lets you select which display to capture. Use the left/right arrows to cycle through Auto (tries display 2 first), Display 1, Display 2, Display 3, etc. The display number is cached for the duration of the slideshow and resets when the slideshow ends.
+On multi-monitor setups, the **Capture** control in the Controls panel lets you select which display to capture. Use the left/right arrows to cycle through Auto (tries display 2 first), Display 1, Display 2, Display 3, etc. The display number is saved across sessions.
+
+The slide preview panel can be resized by dragging the pill-shaped handle at its top edge up or down. The size is saved and restored on the next launch.
 
 ### Scroll Progress Indicator
 
@@ -232,6 +236,10 @@ If you can't use VBA (e.g., presenting from someone else's machine), keyboard mo
 | End | Jump to last section |
 
 PowerPoint's arrow keys and clicker continue to control slides independently.
+
+## Persistent Settings
+
+The teleprompter automatically saves your display settings to a `.teleprompter-settings.json` file in the same directory as your script file. This includes font size, text width, word spacing, mirror mode, highlight bar opacity and line count, capture display number, and slide panel height. Settings are saved whenever you make a change and restored automatically the next time you launch the teleprompter with a script from that directory. You can delete the file to reset to defaults.
 
 ## Config File and Launcher
 
