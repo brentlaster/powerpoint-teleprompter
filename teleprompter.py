@@ -2332,42 +2332,59 @@ document.getElementById('teleprompter').addEventListener('touchend', function(e)
   if (e.target.closest('.control-panel')) return;
 }, { passive: true });
 
-// ── Mouse-drag-to-scroll (for touchscreens that macOS treats as mouse input) ──
+// ── Pointer-drag-to-scroll (for touchscreens that macOS treats as mouse input) ──
+// Uses Pointer Events with setPointerCapture so the cursor stays locked to the
+// teleprompter during a drag — no horizontal wandering or missed events.
 (function() {
   var tp = document.getElementById('teleprompter');
   var dragging = false;
   var lastY = 0;
-  var dragStartY = 0;
-  var dragMoved = false;
+  var pointerId = -1;
 
-  tp.addEventListener('mousedown', function(e) {
-    // Only on the text area, not controls
+  tp.addEventListener('pointerdown', function(e) {
+    // Only on the text area, not controls or drag handles
     if (e.target.closest('.control-panel') || e.target.closest('.slide-panel-drag')) return;
-    if (e.button !== 0) return;  // left button only
+    if (e.button !== 0) return;  // primary button only
     dragging = true;
-    dragMoved = false;
     lastY = e.clientY;
-    dragStartY = e.clientY;
+    pointerId = e.pointerId;
+    tp.setPointerCapture(e.pointerId);  // lock all pointer events to this element
     tp.style.cursor = 'grabbing';
-    e.preventDefault();  // prevent text selection while dragging
+    e.preventDefault();
   });
 
-  document.addEventListener('mousemove', function(e) {
-    if (!dragging) return;
-    var dy = lastY - e.clientY;  // positive = dragged up = scroll down
-    if (Math.abs(e.clientY - dragStartY) > 4) dragMoved = true;
+  tp.addEventListener('pointermove', function(e) {
+    if (!dragging || e.pointerId !== pointerId) return;
+    var dy = lastY - e.clientY;  // dragged up = scroll down
     tp.scrollTop += dy;
     lastY = e.clientY;
+    e.preventDefault();
   });
 
-  document.addEventListener('mouseup', function() {
-    if (!dragging) return;
+  tp.addEventListener('pointerup', function(e) {
+    if (!dragging || e.pointerId !== pointerId) return;
     dragging = false;
-    tp.style.cursor = '';
+    tp.releasePointerCapture(e.pointerId);
+    tp.style.cursor = 'grab';
+    pointerId = -1;
   });
 
-  // Show grab cursor on hover over the teleprompter text area
+  tp.addEventListener('pointercancel', function(e) {
+    if (!dragging || e.pointerId !== pointerId) return;
+    dragging = false;
+    tp.style.cursor = 'grab';
+    pointerId = -1;
+  });
+
+  // Also handle lostpointercapture in case the browser releases it
+  tp.addEventListener('lostpointercapture', function() {
+    dragging = false;
+    tp.style.cursor = 'grab';
+    pointerId = -1;
+  });
+
   tp.style.cursor = 'grab';
+  tp.style.touchAction = 'none';  // let our handler manage all pointer input
 })();
 
 // ── Polling (also syncs server settings from remote) ──
