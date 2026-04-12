@@ -36,6 +36,7 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 - **Scroll past end** -- text can be scrolled completely off the top of the screen, so you're never stuck with text anchored at the bottom
 - **Demo Mode** (macOS) -- one-tap switch between your PowerPoint slideshow and a Terminal window for live coding demos, then back again on the same slide
 - **Expandable Q&A index** -- add a collapsible Q&A section to your Questions slide using HTML `<details>`/`<summary>` tags in your script
+- **Focus Teleprompter Screen** -- a button on the phone remote that uses AppleScript to bring the browser window to the foreground, making the touchscreen responsive without needing a mouse
 - **Mirror mode** -- horizontal flip for physical teleprompter rigs
 - **Persistent settings** -- all display settings (font size, width, highlight, capture display, panel height, etc.) are saved to a `.teleprompter-settings.json` file next to your script and automatically restored on the next launch
 - **Resizable slide preview** -- in portrait mode, drag the pill handle at the top of the slide panel to make the screenshot preview larger or smaller; the size is saved across sessions
@@ -137,6 +138,7 @@ All display changes made on the phone are applied to the teleprompter in real ti
 | **Spacing** | -4 -- 24px | 0px | Extra space between words |
 | **Highlight Bar** | 0 -- 100% | Off (0%) | Yellow highlight band at top of screen; slide to adjust opacity |
 | **HL Lines** | 1 -- 8 | 3 | Number of text lines the highlight bar covers |
+| **UI Scale** | 0.8x -- 1.6x | 1x | Scale factor for the control panel and slide panel buttons |
 | **Mirror** | On / Off | Off | Horizontal flip for physical teleprompter rigs |
 
 ## Teleprompter Window Controls
@@ -330,6 +332,7 @@ cd ~/talks/keynote
 | `/api/slide-image` | GET | Live screenshot of the PowerPoint slideshow (JPEG) |
 | `/api/slide-image-debug` | GET | Debug info for the screenshot pipeline |
 | `/api/screenshot-display` | POST | Set which display to capture (JSON: `{"display": 3}`, 0 = auto) |
+| `/api/focus-browser` | POST | Activate the browser window via AppleScript (macOS only) |
 | `/api/demo/toggle` | GET | Toggle demo mode (switch between slideshow and Terminal) |
 | `/api/demo/state` | GET | Current demo mode state and available demo script |
 | `/api/remote-url` | GET | Get the phone remote URL with LAN IP |
@@ -386,8 +389,12 @@ By default, the teleprompter auto-detects and captures display 2 (assuming the t
 **Start Slideshow button doesn't reappear when slideshow ends**
 A background thread checks PowerPoint's slideshow status every 3 seconds. If it detects the slideshow has ended, it resets the UI. Make sure PowerPoint is still running; the detection relies on AppleScript checking the slide show window count.
 
-**Touchscreen focus issues**
-Touching the teleprompter browser on a secondary touchscreen may not move macOS keyboard focus away from the primary screen. This is a macOS limitation -- the OS does not automatically switch focus between displays on touch input alone. Use the phone remote for all controls during a presentation to avoid focus conflicts with PowerPoint.
+**Touchscreen limitations (macOS)**
+On macOS, external touchscreens generate mouse events rather than native touch/scroll events. This causes two issues: (1) Touching the teleprompter screen does not automatically switch app focus from PowerPoint to the browser — the tap registers as a click in whatever app was last active. (2) Finger drags move the cursor rather than scrolling natively. The teleprompter includes a drag-to-scroll handler with momentum (a quick flick keeps scrolling after you lift your finger), but it can feel imprecise because the OS-level cursor still drifts.
+
+To make the touchscreen responsive, tap the **Focus Teleprompter Screen** button on the phone remote. This uses AppleScript to bring the browser window to the foreground so touch input reaches it. You'll need to do this each time after interacting with PowerPoint.
+
+**For the most reliable experience during a live presentation, use the phone remote.** The phone remote avoids all touchscreen focus issues and lets you scroll text, advance slides, and adjust settings without touching the teleprompter screen at all. If you do use a touchscreen, the **UI Scale** control (0.8x--1.6x) can make the buttons larger and easier to hit.
 
 **Port already in use**
 Another instance may be running. Kill it with `lsof -ti:8765 | xargs kill` or use `--port` to pick a different port.

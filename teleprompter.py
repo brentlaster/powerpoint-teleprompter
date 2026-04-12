@@ -119,7 +119,7 @@ _settings_file_path = None
 # Keys that we persist to disk (excludes volatile ones like settingsVersion)
 _PERSIST_KEYS = ("fontSize", "textWidth", "wordSpacing", "mirror",
                  "highlightLevel", "highlightLines", "screenshotDisplay",
-                 "panelHeightPct")
+                 "panelHeightPct", "uiScaleLevel")
 
 
 def _load_saved_settings():
@@ -833,7 +833,7 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                     for key in ("fontSize", "textWidth", "wordSpacing",
                                 "autoScroll", "scrollSpeed", "mirror",
                                 "highlightLevel", "highlightLines",
-                                "panelHeightPct"):
+                                "panelHeightPct", "uiScaleLevel"):
                         if key in updates:
                             display_settings[key] = updates[key]
                     display_settings["settingsVersion"] += 1
@@ -867,6 +867,123 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                 self._json_response({"ok": True, "display": d})
             except Exception as e:
                 self._json_response({"ok": False, "error": str(e)}, 400)
+
+        elif self.path == "/api/focus-browser":
+            # Use AppleScript to find the browser window with "Teleprompter"
+            # in its title and raise that specific window.
+            if platform.system() == "Darwin":
+                # First, figure out which browsers are actually running
+                running = []
+                for name in ("Google Chrome", "Safari", "Firefox"):
+                    try:
+                        r = subprocess.run(
+                            ["osascript", "-e",
+                             f'tell application "System Events" to '
+                             f'return exists process "{name}"'],
+                            capture_output=True, text=True, timeout=3
+                        )
+                        if r.returncode == 0 and "true" in r.stdout.lower():
+                            running.append(name)
+                    except Exception:
+                        pass
+
+                focused = False
+                err_detail = ""
+                for browser in running:
+                    try:
+                        if browser == "Google Chrome":
+                            script = '''
+tell application "Google Chrome"
+    set winCount to count of windows
+    repeat with i from 1 to winCount
+        set w to window i
+        set tabCount to count of tabs of w
+        repeat with j from 1 to tabCount
+            if title of tab j of w contains "Teleprompter" then
+                set active tab index of w to j
+                set index of w to 1
+                activate
+                return "found"
+            end if
+        end repeat
+    end repeat
+    -- Tab not found, just activate Chrome anyway
+    activate
+    return "activated"
+end tell
+'''
+                        elif browser == "Safari":
+                            script = '''
+tell application "Safari"
+    set winCount to count of windows
+    repeat with i from 1 to winCount
+        set w to window i
+        set tabCount to count of tabs of w
+        repeat with j from 1 to tabCount
+            if name of tab j of w contains "Teleprompter" then
+                set current tab of w to tab j of w
+                set index of w to 1
+                activate
+                return "found"
+            end if
+        end repeat
+    end repeat
+    activate
+    return "activated"
+end tell
+'''
+                        else:  # Firefox — no tab-level AppleScript API
+                            script = '''
+tell application "Firefox" to activate
+return "activated"
+'''
+                        result = subprocess.run(
+                            ["osascript", "-e", script],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if result.returncode == 0:
+                            status = result.stdout.strip()
+                            # AppleScript activate can be flaky — also use
+                            # 'open -a' which is more reliable at bringing
+                            # the app to the foreground on macOS.
+                            subprocess.run(
+                                ["open", "-a", browser],
+                                capture_output=True, timeout=3
+                            )
+                            self._json_response({
+                                "ok": True,
+                                "browser": browser,
+                                "matched": status == "found"
+                            })
+                            focused = True
+                            break
+                        else:
+                            err_detail = result.stderr.strip()
+                    except Exception as e:
+                        err_detail = str(e)
+
+                if not focused:
+                    # Last resort: try open -a for each running browser
+                    for browser in running:
+                        try:
+                            subprocess.run(
+                                ["open", "-a", browser],
+                                capture_output=True, timeout=3
+                            )
+                            self._json_response({
+                                "ok": True,
+                                "browser": browser,
+                                "matched": False
+                            })
+                            focused = True
+                            break
+                        except Exception:
+                            pass
+                if not focused:
+                    msg = "No running browser found" if not running else f"AppleScript error: {err_detail}"
+                    self._json_response({"ok": False, "error": msg})
+            else:
+                self._json_response({"ok": False, "error": "macOS only"})
 
         else:
             self.send_response(404)
@@ -1142,6 +1259,11 @@ REMOTE_PAGE = r"""<!DOCTYPE html>
   </button>
 </div>
 
+<!-- Focus browser (activates the teleprompter browser window via AppleScript) -->
+<button class="big-btn" id="focusBrowserBtn" style="background:#555;border-color:#666;color:#fff;" ontouchend="focusBrowser(event)" onclick="focusBrowser(event)">
+  &#x1F5A5; Focus Teleprompter Screen
+</button>
+
 <!-- Demo mode toggle -->
 <button class="big-btn" id="demoBtn" style="background:#7c3aed;border-color:#7c3aed;color:#fff;" ontouchend="toggleDemo(event)" onclick="toggleDemo(event)">
   &#x1F4BB; Switch to Demo
@@ -1221,6 +1343,27 @@ function pptSlide(dir, e) {
     })
     .catch(function() {
       document.getElementById('statusBar').textContent = 'Connection error';
+    });
+}
+
+function focusBrowser(e) {
+  stopEvent(e);
+  document.getElementById('statusBar').textContent = 'Focusing...';
+  fetch('/api/focus-browser', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      console.log('focus response', JSON.stringify(data));
+      if (data.ok) {
+        var msg = data.matched ? 'Focused teleprompter in ' + data.browser
+                               : 'Activated ' + data.browser + ' (tab not matched)';
+        document.getElementById('statusBar').textContent = msg;
+      } else {
+        document.getElementById('statusBar').textContent = 'Focus failed: ' + (data.error || 'unknown');
+      }
+    })
+    .catch(function(err) {
+      console.log('focus error', err);
+      document.getElementById('statusBar').textContent = 'Focus request failed';
     });
 }
 
@@ -1485,6 +1628,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     line-height: 1.9;
     font-size: 2.8rem;
     position: relative;
+    touch-action: none;  /* let JS handle all touch/pointer gestures */
   }
   .teleprompter .inner {
     max-width: 1800px;
@@ -1610,7 +1754,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     flex-shrink: 0;
     background: #0d0d14;
     border-top: 2px solid var(--border);
-    padding: 0 24px 16px;
+    padding: 0 0 12px;
     position: relative;
   }
   .slide-panel-drag {
@@ -1635,12 +1779,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .slide-panel-preview {
     text-align: center;
     margin-bottom: 10px;
+    padding: 0 4px;
   }
   .slide-panel-preview img {
-    max-width: 100%;
+    width: 100%;
     max-height: var(--panel-img-max-h, 30vh);
-    border-radius: 8px;
-    border: 2px solid var(--border);
+    border-radius: 4px;
+    border: 1px solid var(--border);
     background: #000;
     object-fit: contain;
   }
@@ -1649,6 +1794,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .slide-panel-info {
     text-align: center;
     margin-bottom: 10px;
+    padding: 0 16px;
   }
   .slide-panel .slide-panel-num {
     font-size: 1.6rem;
@@ -1665,6 +1811,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     display: flex;
     gap: 12px;
     justify-content: center;
+    padding: 0 16px;
   }
   .slide-panel .slide-panel-btn {
     padding: 10px 28px;
@@ -2020,6 +2167,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- UI Scale -->
+      <div class="cp-row">
+        <span class="cp-label">UI Scale</span>
+        <div class="cp-btn-group">
+          <button class="cp-btn" onclick="changeUiScale(-1)">&#x2212;</button>
+          <span class="cp-value" id="uiScaleValue">1x</span>
+          <button class="cp-btn" onclick="changeUiScale(1)">+</button>
+        </div>
+      </div>
+
       <!-- Demo mode toggle -->
       <button class="demo-toggle" id="demoToggleBtn">
         &#x1F4BB; Switch to Demo
@@ -2194,7 +2351,8 @@ function pushSettings() {
       wordSpacing: wordSpacing,
       mirror: mirrorOn,
       highlightLevel: highlightLevel,
-      highlightLines: highlightLines
+      highlightLines: highlightLines,
+      uiScaleLevel: uiScaleLevel
     })
   }).catch(function() {});
 }
@@ -2228,6 +2386,10 @@ function applyServerSettings(s) {
   if (typeof s.highlightLines !== 'undefined' && s.highlightLines !== highlightLines) {
     highlightLines = s.highlightLines;
     applyHighlightLines();
+  }
+  if (typeof s.uiScaleLevel !== 'undefined' && s.uiScaleLevel !== uiScaleLevel) {
+    uiScaleLevel = s.uiScaleLevel;
+    applyUiScale();
   }
   if (typeof s.screenshotDisplay !== 'undefined' && s.screenshotDisplay !== captureDisplay) {
     captureDisplay = s.screenshotDisplay;
@@ -2317,74 +2479,86 @@ function showTouchHint(msg) {
   touchHintTimer = setTimeout(function() { hint.classList.remove('show'); }, 1200);
 }
 
-// ── Touch / click to pause/resume in text area ──
-var touchMoved = false;
-document.getElementById('teleprompter').addEventListener('touchstart', function(e) {
-  if (e.target.closest('.control-panel')) return;
-  touchMoved = false;
-}, { passive: true });
-
-document.getElementById('teleprompter').addEventListener('touchmove', function() {
-  touchMoved = true;
-}, { passive: true });
-
-document.getElementById('teleprompter').addEventListener('touchend', function(e) {
-  if (e.target.closest('.control-panel')) return;
-}, { passive: true });
-
-// ── Pointer-drag-to-scroll (for touchscreens that macOS treats as mouse input) ──
-// Uses Pointer Events with setPointerCapture so the cursor stays locked to the
-// teleprompter during a drag — no horizontal wandering or missed events.
+// ── Drag-to-scroll with momentum ──
+// Uses ONLY pointer events (unified API for mouse, touch, pen).
+// CSS touch-action:none on .teleprompter prevents browser from
+// handling gestures natively, so our JS gets all events reliably.
 (function() {
   var tp = document.getElementById('teleprompter');
   var dragging = false;
-  var lastY = 0;
   var pointerId = -1;
+  var lastY = 0;
+  var lastTime = 0;
+  var velocity = 0;
+  var momentumId = 0;
+  var FRICTION = 0.95;
+  var MIN_VEL = 0.5;
+
+  function isControl(el) {
+    if (!el) return false;
+    return el.closest('.control-panel') || el.closest('.slide-panel-drag')
+        || el.closest('.slide-panel-nav') || el.closest('.slide-panel-btn')
+        || el.tagName === 'INPUT' || el.tagName === 'BUTTON';
+  }
+
+  function stopMomentum() {
+    if (momentumId) { cancelAnimationFrame(momentumId); momentumId = 0; }
+    velocity = 0;
+  }
+
+  function momentumStep() {
+    velocity *= FRICTION;
+    if (Math.abs(velocity) < MIN_VEL) { momentumId = 0; return; }
+    tp.scrollTop += velocity;
+    momentumId = requestAnimationFrame(momentumStep);
+  }
 
   tp.addEventListener('pointerdown', function(e) {
-    // Only on the text area, not controls or drag handles
-    if (e.target.closest('.control-panel') || e.target.closest('.slide-panel-drag')) return;
-    if (e.button !== 0) return;  // primary button only
+    if (isControl(e.target)) return;
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    stopMomentum();
     dragging = true;
-    lastY = e.clientY;
     pointerId = e.pointerId;
-    tp.setPointerCapture(e.pointerId);  // lock all pointer events to this element
-    tp.style.cursor = 'grabbing';
-    e.preventDefault();
-  });
-
-  tp.addEventListener('pointermove', function(e) {
-    if (!dragging || e.pointerId !== pointerId) return;
-    var dy = lastY - e.clientY;  // dragged up = scroll down
-    tp.scrollTop += dy;
     lastY = e.clientY;
+    lastTime = Date.now();
+    velocity = 0;
+    tp.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+    // Do NOT use setPointerCapture — it causes cursor drift on some drivers.
+    // Instead we listen on document for move/up.
+  });
+
+  document.addEventListener('pointermove', function(e) {
+    if (!dragging || e.pointerId !== pointerId) return;
     e.preventDefault();
+    var y = e.clientY;
+    var now = Date.now();
+    var moveDy = lastY - y;
+    var dt = Math.max(1, now - lastTime);
+    velocity = 0.7 * (moveDy / dt * 16) + 0.3 * velocity;
+    tp.scrollTop += moveDy;
+    lastY = y;
+    lastTime = now;
   });
 
-  tp.addEventListener('pointerup', function(e) {
-    if (!dragging || e.pointerId !== pointerId) return;
+  function endDrag(e) {
+    if (!dragging) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== pointerId) return;
+    if (Math.abs(velocity) > MIN_VEL) {
+      momentumId = requestAnimationFrame(momentumStep);
+    }
     dragging = false;
-    tp.releasePointerCapture(e.pointerId);
-    tp.style.cursor = 'grab';
     pointerId = -1;
-  });
+    tp.style.cursor = 'grab';
+    document.body.style.userSelect = '';
+    document.body.style.webkitUserSelect = '';
+  }
 
-  tp.addEventListener('pointercancel', function(e) {
-    if (!dragging || e.pointerId !== pointerId) return;
-    dragging = false;
-    tp.style.cursor = 'grab';
-    pointerId = -1;
-  });
-
-  // Also handle lostpointercapture in case the browser releases it
-  tp.addEventListener('lostpointercapture', function() {
-    dragging = false;
-    tp.style.cursor = 'grab';
-    pointerId = -1;
-  });
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
 
   tp.style.cursor = 'grab';
-  tp.style.touchAction = 'none';  // let our handler manage all pointer input
 })();
 
 // ── Polling (also syncs server settings from remote) ──
@@ -2581,6 +2755,37 @@ function toggleHighlight() {
   // Keyboard shortcut: toggle between 0 and 50%
   setHighlightLevel(highlightOn ? 0 : 50);
 }
+
+// ── UI Scale (makes control panel buttons bigger/smaller) ──
+var uiScaleLevel = 0;  // -2 to +4, 0 = normal
+var UI_SCALES = [0.8, 0.9, 1.0, 1.1, 1.25, 1.4, 1.6];
+var UI_SCALE_LABELS = ['0.8x', '0.9x', '1x', '1.1x', '1.25x', '1.4x', '1.6x'];
+
+function applyUiScale() {
+  var idx = uiScaleLevel + 2;  // offset so level 0 maps to index 2 (1.0)
+  idx = Math.max(0, Math.min(UI_SCALES.length - 1, idx));
+  var scale = UI_SCALES[idx];
+  var panel = document.getElementById('controlPanel');
+  var slidePanel = document.getElementById('slidePanel');
+  if (panel) {
+    panel.style.transformOrigin = 'bottom right';
+    panel.style.transform = scale === 1 ? '' : 'scale(' + scale + ')';
+  }
+  if (slidePanel) {
+    slidePanel.style.transformOrigin = 'bottom center';
+    slidePanel.style.transform = scale === 1 ? '' : 'scale(' + scale + ')';
+  }
+  var label = document.getElementById('uiScaleValue');
+  if (label) label.textContent = UI_SCALE_LABELS[idx];
+}
+
+function changeUiScale(delta) {
+  uiScaleLevel = Math.max(-2, Math.min(4, uiScaleLevel + delta));
+  applyUiScale();
+  pushSettings();
+}
+
+applyUiScale();
 
 var slideImgTimer = null;
 function updateSlidePanel(data) {
