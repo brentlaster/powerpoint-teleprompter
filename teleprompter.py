@@ -611,6 +611,13 @@ def start_keyboard_listener():
 # ── HTTP Server ──
 
 class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
+    def handle(self):
+        """Override to catch broken connections so they never crash the server."""
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass  # client disconnected mid-request, harmless
+
     def log_message(self, format, *args):
         pass
 
@@ -811,11 +818,16 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                     msg = f"No screenshot available. active={slideshow_active}, path={path}"
                     self.wfile.write(msg.encode())
+            except (ConnectionResetError, BrokenPipeError):
+                pass  # browser disconnected mid-transfer, harmless
             except (FileNotFoundError, OSError):
-                self.send_response(404)
-                self.send_header("Content-Type", "text/plain")
-                self.end_headers()
-                self.wfile.write(b"Screenshot file was removed during read")
+                try:
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(b"Screenshot file was removed during read")
+                except (ConnectionResetError, BrokenPipeError):
+                    pass
 
         else:
             self.send_response(404)
