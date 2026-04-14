@@ -430,7 +430,7 @@ def _capture_slideshow_screenshot():
 
 def _run_screenshot_loop():
     """Background loop that captures slideshow screenshots every 2 seconds."""
-    global _screenshot_display
+    global _screenshot_display, live_screenshot_path
     import time as _time
     capture_count = 0
     while True:
@@ -584,18 +584,66 @@ def start_keyboard_listener():
         print("=" * 60 + "\n")
         sys.exit(1)
 
-    ADVANCE_KEY = '.'
-    RETREAT_KEY = ','
+    ADVANCE_CHARS = {'.', ' '}  # period, space (PowerPoint also advances on space)
+    RETREAT_CHARS = {','}       # comma
+    ADVANCE_KEYS = {
+        keyboard.Key.right, keyboard.Key.down,
+        keyboard.Key.page_down, keyboard.Key.enter,
+    }
+    RETREAT_KEYS = {
+        keyboard.Key.left, keyboard.Key.up,
+        keyboard.Key.page_up, keyboard.Key.backspace,
+    }
+    # Period and comma stay as "always-on" hotkeys (the original behaviour) —
+    # they're unusual enough that accidental presses are rare. Arrow keys,
+    # space, etc. are only active when PowerPoint is the frontmost app so
+    # typing elsewhere (terminal, editor, browser) doesn't advance slides.
+    ALWAYS_ON_CHARS = {'.', ','}
+    ALWAYS_ON_KEYS = {keyboard.Key.home, keyboard.Key.end}
+
+    # Cache frontmost-app lookups to avoid spawning osascript per keypress.
+    _frontmost_cache = {"app": "", "time": 0.0}
+    _CACHE_TTL = 0.5  # seconds
+
+    def _is_powerpoint_active():
+        """Return True if Microsoft PowerPoint is the frontmost macOS app."""
+        if platform.system() != "Darwin":
+            return True  # skip check on non-macOS
+        import time as _t
+        now = _t.monotonic()
+        if now - _frontmost_cache["time"] < _CACHE_TTL:
+            return "PowerPoint" in _frontmost_cache["app"]
+        try:
+            r = subprocess.run(
+                ["osascript", "-e",
+                 'tell application "System Events" to '
+                 'return name of first application process whose frontmost is true'],
+                capture_output=True, text=True, timeout=1
+            )
+            app = r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            app = ""
+        _frontmost_cache["app"] = app
+        _frontmost_cache["time"] = now
+        return "PowerPoint" in app
 
     def on_press(key):
         try:
             ch = key.char
-            if ch == ADVANCE_KEY:
-                next_slide()
-            elif ch == RETREAT_KEY:
-                prev_slide()
+            if ch in ADVANCE_CHARS:
+                if ch in ALWAYS_ON_CHARS or _is_powerpoint_active():
+                    next_slide()
+            elif ch in RETREAT_CHARS:
+                if ch in ALWAYS_ON_CHARS or _is_powerpoint_active():
+                    prev_slide()
         except AttributeError:
-            if key == keyboard.Key.home:
+            if key in ADVANCE_KEYS:
+                if key in ALWAYS_ON_KEYS or _is_powerpoint_active():
+                    next_slide()
+            elif key in RETREAT_KEYS:
+                if key in ALWAYS_ON_KEYS or _is_powerpoint_active():
+                    prev_slide()
+            elif key == keyboard.Key.home:
                 _set_slide(1)
             elif key == keyboard.Key.end:
                 _set_slide(total_slides)
@@ -604,8 +652,12 @@ def start_keyboard_listener():
     listener.daemon = True
     listener.start()
     print("Global keyboard listener started")
-    print(f"  [ {ADVANCE_KEY} ]  (period) = next script section")
-    print(f"  [ {RETREAT_KEY} ]  (comma)  = previous script section")
+    print("  Advance: . (period), Space, Right, Down, PageDown, Return")
+    print("  Back:    , (comma),  Left,  Up,   PageUp,   Backspace")
+    print("  Jump:    Home = first slide, End = last slide")
+    print("  Note: Space/Arrows/PageUp-Down/Return/Backspace only trigger")
+    print("        when PowerPoint is the frontmost app. Period and comma")
+    print("        always work so they can be used from the teleprompter.")
     return listener
 
 

@@ -41,6 +41,9 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 - **Persistent settings** -- all display settings (font size, width, highlight, capture display, panel height, etc.) are saved to a `.teleprompter-settings.json` file next to your script and automatically restored on the next launch
 - **Resizable slide preview** -- in portrait mode, drag the pill handle at the top of the slide panel to make the screenshot preview larger or smaller; the size is saved across sessions
 - **Config file & launcher** -- point to your deck + script in a JSON file and launch everything with one command
+- **ngrok tunnel launcher** (`launch3.sh`) -- one-command public URL for the phone remote when hotel WiFi won't cooperate
+- **Expanded keyboard mode** -- in addition to period/comma, now supports Arrow keys, Space, PageUp/Down, Return, and Backspace as fallback slide-advance keys. Newly added keys only trigger when PowerPoint is the frontmost app, so typing in a terminal or editor during a demo doesn't advance the teleprompter
+- **Touch-Up edition** (`teleprompter_touchup.py`) -- a parallel version tuned for use with the open-source Touch-Up macOS touchscreen driver
 
 ## Requirements
 
@@ -49,6 +52,8 @@ This architecture avoids PowerPoint for Mac's sandbox restrictions -- no file I/
 - **A web browser** for the teleprompter display
 - **A phone** on the same Wi-Fi network (for the remote control)
 - **Optional:** `pynput` for keyboard fallback mode (`pip3 install pynput`)
+- **Optional:** `ngrok` for the `launch3.sh` public-tunnel launcher (`brew install ngrok`)
+- **Optional:** [Touch-Up](https://github.com/shueber/Touch-Up) macOS touchscreen driver for the `teleprompter_touchup.py` edition
 
 ## Quick Start
 
@@ -221,23 +226,32 @@ python3 teleprompter.py path/to/script.md --port 9000
 # Don't auto-open browser
 python3 teleprompter.py path/to/script.md --no-browser
 
-# Keyboard fallback mode (no VBA needed)
+# Keyboard fallback mode (can run standalone OR alongside VBA)
 pip3 install pynput  # one-time
 python3 teleprompter.py path/to/script.md --keyboard
+
+# Use a public ngrok URL for the phone remote (see launch3.sh)
+python3 teleprompter.py path/to/script.md --public-url https://abc123.ngrok.io
 ```
 
 ### Keyboard Fallback Mode
 
-If you can't use VBA (e.g., presenting from someone else's machine), keyboard mode lets you advance the teleprompter script manually:
+Keyboard mode can run standalone (e.g., when presenting from a machine without the VBA macro) **or alongside the VBA macro** as a belt-and-suspenders fallback. With `--keyboard` enabled, every standard PowerPoint slide-advance key also advances the teleprompter, so if the phone remote connection ever fails mid-presentation you can keep going just by using your laptop keyboard.
 
-| Key | Action |
-|-----|--------|
-| `.` (period) | Next script section |
-| `,` (comma) | Previous script section |
-| Home | Jump to first section |
-| End | Jump to last section |
+| Key | Action | Active |
+|-----|--------|--------|
+| `.` (period) | Next script section | Always |
+| `,` (comma)  | Previous script section | Always |
+| Home | Jump to first section | Always |
+| End | Jump to last section | Always |
+| Space, Right Arrow, Down Arrow, PageDown, Return | Next section | Only when PowerPoint is frontmost |
+| Left Arrow, Up Arrow, PageUp, Backspace | Previous section | Only when PowerPoint is frontmost |
 
-PowerPoint's arrow keys and clicker continue to control slides independently.
+The "only when PowerPoint is frontmost" scoping prevents accidental advances when you Cmd+Tab to a terminal, code editor, or browser for a live demo -- typing in those apps won't affect the teleprompter. Period and comma stay unrestricted so you can use them from the teleprompter browser window itself.
+
+Running the VBA macro and `--keyboard` mode simultaneously is safe: pressing an arrow key in PowerPoint causes pynput to advance the teleprompter and (a beat later) the VBA macro reports the new slide number, which converges to the same result. No double-advance.
+
+To enable: `python3 teleprompter.py path/to/script.md --keyboard` or set `"keyboard": true` in your `talk.json`.
 
 ## Persistent Settings
 
@@ -301,6 +315,31 @@ cd ~/talks/keynote
 /path/to/launch.sh ~/talks/keynote/talk.json
 ```
 
+### ngrok Launcher (`launch3.sh`)
+
+When you're on a network that blocks device-to-device traffic (hotel Wi-Fi with client isolation, most conference networks), a second launcher is included that exposes the teleprompter server to the public internet through an [ngrok](https://ngrok.com) tunnel. Your phone then reaches the remote via a public HTTPS URL from any network -- cellular, hotel WiFi, or anywhere else.
+
+**Prerequisites (one-time):**
+
+```bash
+brew install ngrok
+ngrok config add-authtoken <your-token>   # free token from https://dashboard.ngrok.com
+```
+
+**Usage:**
+
+```bash
+cd ~/talks/keynote
+/path/to/launch3.sh
+```
+
+The script starts `ngrok`, waits for the tunnel URL, and launches the teleprompter with `--public-url <ngrok-url>`. The QR code in the Controls panel and the `/api/remote-url` endpoint will return the ngrok URL instead of the LAN IP, so scanning the QR code from your phone opens the correct remote even across networks. When you Ctrl+C the teleprompter, ngrok is automatically shut down as well.
+
+**Caveats:**
+- ngrok's free tier has request and bandwidth limits. Heavy use of the live screenshot feature can occasionally produce `502 Bad Gateway` errors if requests time out or rate limits are hit. Turning off the portrait slide preview or closing the main browser tab (leaving only the phone remote) reduces polling load.
+- Tunnel stability depends on your upstream connection -- the tunnel can drop on very flaky networks.
+- The `--public-url` flag is also available directly: `python3 teleprompter.py ... --public-url https://abc123.ngrok.io`.
+
 ### Typical Workflow with Config
 
 1. Create your deck (`my-talk.pptm`) and script (`my-talk_script.md`) in a folder.
@@ -332,7 +371,8 @@ cd ~/talks/keynote
 | `/api/slide-image` | GET | Live screenshot of the PowerPoint slideshow (JPEG) |
 | `/api/slide-image-debug` | GET | Debug info for the screenshot pipeline |
 | `/api/screenshot-display` | POST | Set which display to capture (JSON: `{"display": 3}`, 0 = auto) |
-| `/api/focus-browser` | POST | Activate the browser window via AppleScript (macOS only) |
+| `/api/focus-browser` | POST | Find the browser window/tab whose title contains "Teleprompter" and bring it to the foreground via AppleScript + `open -a` (macOS only) |
+| `/api/touchup-status` | POST | (Touch-Up edition) Check whether the Touch-Up macOS driver is currently running |
 | `/api/demo/toggle` | GET | Toggle demo mode (switch between slideshow and Terminal) |
 | `/api/demo/state` | GET | Current demo mode state and available demo script |
 | `/api/remote-url` | GET | Get the phone remote URL with LAN IP |
@@ -348,8 +388,36 @@ my-talk/
   talk.json                  # Config file (deck + script paths, settings)
   vba_macro.txt              # Auto-generated macro (created by teleprompter.py)
   teleprompter.py            # The teleprompter server
+  teleprompter_touchup.py    # Touch-Up edition (removes custom touch handlers)
   launch.sh                  # Convenience launcher script
+  launch3.sh                 # ngrok tunnel launcher (public URL)
 ```
+
+## Touch-Up Edition (`teleprompter_touchup.py`)
+
+A parallel copy of the main teleprompter that is tuned to run alongside the [Touch-Up](https://github.com/shueber/Touch-Up) open-source macOS touchscreen driver. Touch-Up runs as a small menu-bar utility that reads raw USB HID data from your touchscreen and injects proper gesture events into macOS: flick for scroll, tap for click, pinch for zoom, and (optionally) tap-window-to-front for focus.
+
+**Differences from the main `teleprompter.py`:**
+
+- The `.teleprompter` CSS no longer sets `touch-action: none`. With Touch-Up providing proper native scroll events, the browser's built-in `overflow-y: auto` handles scrolling directly.
+- The custom pointer-event drag-to-scroll handler is replaced with a lightweight mouse-only fallback. Touch input is delegated entirely to Touch-Up.
+- A new `/api/touchup-status` endpoint detects whether Touch-Up is running and reports the result. The teleprompter page shows a small banner at the top: green if detected, amber with a "Download Touch-Up" link if not. The startup terminal output reports the same.
+
+**Setup:**
+
+1. Download Touch-Up from <https://github.com/shueber/Touch-Up/releases>.
+2. Move the app to `/Applications`, launch it, and grant Accessibility permissions.
+3. Open Touch-Up's settings (Cmd+, when the app is active, or via its menu) and:
+   - Set the **Touchscreen** picker to your actual touchscreen display.
+   - Enable **Click Window to Front** so tapping the browser window automatically brings it forward (removing the need for the Focus button).
+   - Choose your preferred **One-Finger Drag Mode** (Scroll / Move Cursor / Point and Click).
+4. Run the teleprompter with `python3 teleprompter_touchup.py path/to/script.md` (or `--config`).
+
+**Known caveats:**
+
+- Touch-Up does not currently include touchscreen calibration tools, so if macOS is mapping your touchscreen's coordinates to the wrong display the taps will still land in the wrong place. Try rearranging displays in **System Settings > Displays > Arrange**, or see [Touch-Base UPDD](https://www.touch-base.com/) (paid) for professional-grade 4-to-25-point calibration.
+- Touch-Up is under light maintenance (last release v1.0.2, May 2024). Some users report issues on the newest macOS versions -- see the Touch-Up GitHub issues for current status.
+- The main `teleprompter.py` still works fine without Touch-Up installed -- use that if you aren't running the driver.
 
 ## Troubleshooting
 
@@ -390,9 +458,11 @@ By default, the teleprompter auto-detects and captures display 2 (assuming the t
 A background thread checks PowerPoint's slideshow status every 3 seconds. If it detects the slideshow has ended, it resets the UI. Make sure PowerPoint is still running; the detection relies on AppleScript checking the slide show window count.
 
 **Touchscreen limitations (macOS)**
-On macOS, external touchscreens generate mouse events rather than native touch/scroll events. This causes two issues: (1) Touching the teleprompter screen does not automatically switch app focus from PowerPoint to the browser — the tap registers as a click in whatever app was last active. (2) Finger drags move the cursor rather than scrolling natively. The teleprompter includes a drag-to-scroll handler with momentum (a quick flick keeps scrolling after you lift your finger), but it can feel imprecise because the OS-level cursor still drifts.
+On macOS, external touchscreens generate mouse events rather than native touch/scroll events. This causes several issues: (1) Touching the teleprompter screen does not automatically switch app focus from PowerPoint to the browser -- the tap registers as a click in whatever app was last active. (2) Finger drags move the cursor rather than scrolling natively. The teleprompter includes a drag-to-scroll handler with momentum (a quick flick keeps scrolling after you lift your finger). (3) On multi-monitor setups, macOS often maps the touchscreen's coordinates to the wrong display, so tapping a button in the teleprompter can cause the cursor to fly to a completely different screen.
 
-To make the touchscreen responsive, tap the **Focus Teleprompter Screen** button on the phone remote. This uses AppleScript to bring the browser window to the foreground so touch input reaches it. You'll need to do this each time after interacting with PowerPoint.
+To make the touchscreen responsive, tap the **Focus Teleprompter Screen** button on the phone remote. This uses AppleScript to locate the browser window whose title contains "Teleprompter", switch to that tab if needed, then bring it to the foreground via both `activate` and `open -a` (the two mechanisms together are more reliable than either alone). On 3-monitor setups it will pick the correct Chrome/Safari window by matching the tab title, rather than just activating "whatever Chrome window macOS feels like."
+
+For a better out-of-the-box touchscreen experience, see the [Touch-Up edition](#touch-up-edition-teleprompter_touchuppy) below, which is designed to work with the open-source Touch-Up macOS driver that translates raw HID touchscreen data into proper native gestures.
 
 **For the most reliable experience during a live presentation, use the phone remote.** The phone remote avoids all touchscreen focus issues and lets you scroll text, advance slides, and adjust settings without touching the teleprompter screen at all. If you do use a touchscreen, the **UI Scale** control (0.8x--1.6x) can make the buttons larger and easier to hit.
 
@@ -401,3 +471,18 @@ Another instance may be running. Kill it with `lsof -ti:8765 | xargs kill` or us
 
 **Keyboard mode: keys not detected**
 macOS requires accessibility permissions for `pynput`. Go to System Settings > Privacy & Security > Accessibility and grant permission to your terminal app.
+
+**Keyboard mode: arrow keys advance the teleprompter when typing in other apps**
+Arrow keys, Space, PageUp/Down, Return, and Backspace are only supposed to trigger when PowerPoint is the frontmost app. If they're firing in other apps, check that macOS can identify the frontmost app via AppleScript -- under System Settings > Privacy & Security > Automation, your terminal or Python should be allowed to control **System Events**. Without that permission, the frontmost-app check falls back conservatively but may behave unpredictably.
+
+**ngrok: `502 Bad Gateway` from phone**
+Common causes: (1) Server crashed -- confirm the teleprompter terminal is still running. (2) Slow responses timing out -- the live slide preview fetches large JPEGs every 2 seconds and can exceed ngrok's response window on slow connections; turn off portrait mode or close the main browser tab to reduce polling. (3) Free-tier rate limit hit -- ngrok's free tier allows 40 connections/minute. Pair the teleprompter with only one phone at a time. (4) Tunnel dropped -- the ngrok terminal pane shows reconnection status; wait a few seconds and retry.
+
+**ngrok: `launch3.sh` says "Could not get ngrok URL"**
+Either ngrok isn't authenticated (`ngrok config add-authtoken <token>`) or port 4040 (ngrok's local API) is in use by a previous ngrok instance. Kill stale ngrok processes with `pkill ngrok` and try again. Check `/tmp/ngrok-teleprompter.log` for details.
+
+**Hotel / conference WiFi: phone can't reach the Mac**
+Three options, in order of increasing effort:
+1. **iPhone hotspot, Mac as client** -- turn on Personal Hotspot on your iPhone, disconnect the Mac from hotel WiFi, connect it to the phone's hotspot. Both devices are now on the phone's network where the teleprompter IP is reachable.
+2. **Run `launch3.sh`** -- exposes the server through a public ngrok tunnel. No local network connectivity required.
+3. **Internet Sharing over iPhone USB** -- System Settings > General > Sharing > Internet Sharing; share Wi-Fi to the iPhone USB interface. This is finicky: the iPhone must have Cellular Data and "Maximize Compatibility" enabled, a data cable, Personal Hotspot enabled, and have been "Trusted" from the Mac. If the USB interface (e.g. `en11`) reports `status: inactive` or gets a `169.254.x.x` self-assigned IP, the iPhone isn't accepting the shared connection -- fall back to option 1 or 2.
