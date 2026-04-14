@@ -162,6 +162,7 @@ scroll_lock = threading.Lock()
 # ── Network info (set at startup) ──
 local_ip = "127.0.0.1"
 server_port = DEFAULT_PORT
+public_url = None  # set via --public-url for ngrok/tunnel access
 
 
 def _activate_slideshow(slide_num):
@@ -637,7 +638,10 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(HTML_PAGE.encode("utf-8"))
 
         elif self.path == "/qr":
-            remote_url = f"http://{local_ip}:{server_port}/remote"
+            if public_url:
+                remote_url = public_url.rstrip("/") + "/remote"
+            else:
+                remote_url = f"http://{local_ip}:{server_port}/remote"
             page = QR_PAGE.replace("{{REMOTE_URL}}", remote_url)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -645,7 +649,10 @@ class TeleprompterHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(page.encode("utf-8"))
 
         elif self.path == "/api/remote-url":
-            remote_url = f"http://{local_ip}:{server_port}/remote"
+            if public_url:
+                remote_url = public_url.rstrip("/") + "/remote"
+            else:
+                remote_url = f"http://{local_ip}:{server_port}/remote"
             self._json_response({"url": remote_url})
 
         elif self.path == "/remote":
@@ -3067,11 +3074,14 @@ def main():
                         help="Don't auto-open browser")
     parser.add_argument("--keyboard", action="store_true",
                         help="Use global keyboard monitoring (period/comma) instead of VBA")
+    parser.add_argument("--public-url",
+                        help="Public URL for phone remote (e.g. ngrok URL). "
+                             "Used for QR code and remote link instead of local IP.")
 
     args = parser.parse_args()
 
     global script_sections, total_slides, mode, slideshow_active
-    global local_ip, server_port, deck_path
+    global local_ip, server_port, deck_path, public_url
     global demo_script, demo_dir
 
     # ── Merge config file + command-line args ──
@@ -3089,6 +3099,7 @@ def main():
     use_keyboard = args.keyboard or cfg.get("keyboard", False)
     auto_open_deck = cfg.get("auto_open_deck", True) if deck_path else False
     auto_start_show = cfg.get("auto_start_show", False)
+    public_url = args.public_url or cfg.get("public_url")
 
     server_port = port
 
@@ -3184,7 +3195,10 @@ def main():
         print("  Warning: Could not detect LAN IP. Replace YOUR_IP with your computer's IP.")
 
     print(f"\nTeleprompter running at http://localhost:{port}")
-    print(f"\n  Phone remote:  http://{local_ip}:{port}/remote")
+    if public_url:
+        print(f"\n  Phone remote:  {public_url.rstrip('/')}/remote  (public)")
+    else:
+        print(f"\n  Phone remote:  http://{local_ip}:{port}/remote")
     print(f"  QR code page:  http://localhost:{port}/qr")
     print("\nPress Ctrl+C to quit.\n")
 
