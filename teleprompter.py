@@ -103,12 +103,15 @@ demo_slide = None        # slide number when demo was entered (to resume from)
 
 # ── Display settings (controlled by remote) ──
 display_settings = {
-    "fontSize": 2.8,
+    "fontSize": 4.9,
     "textWidth": 1800,
     "wordSpacing": 0,        # px, 0 = normal
     "autoScroll": False,
     "scrollSpeed": 30,        # seconds per viewport-height
     "mirror": False,
+    "highlightLevel": 75,    # 0-100 (%), default highlight at 75%
+    "highlightLines": 4,      # number of text lines the highlight bar covers
+    "uiScaleLevel": 2,        # -2..+4, 0 = 1x, +2 = 1.25x (larger controls)
     "settingsVersion": 0,     # bumped on every change so teleprompter knows to update
 }
 settings_lock = threading.Lock()
@@ -133,6 +136,11 @@ def _load_saved_settings():
             for key in _PERSIST_KEYS:
                 if key in saved:
                     display_settings[key] = saved[key]
+            # Bump settingsVersion so the browser's applyServerSettings() sees
+            # it as different from its initial value (0) and actually applies
+            # the loaded settings on the first poll.
+            display_settings["settingsVersion"] = display_settings.get(
+                "settingsVersion", 0) + 1
         print(f"Loaded saved settings from {_settings_file_path}")
     except FileNotFoundError:
         pass
@@ -1503,7 +1511,7 @@ function toggleDemo(e) {
 
 function adjFont(d, e) {
   stopEvent(e);
-  var v = Math.max(1.0, Math.min(6.0, (settings.fontSize || 2.8) + d));
+  var v = Math.max(1.0, Math.min(6.0, (settings.fontSize || 4.9) + d));
   v = Math.round(v * 10) / 10;
   postSettings({ fontSize: v });
 }
@@ -1534,16 +1542,16 @@ function updateDemoBtn(isDemo) {
 }
 
 function updateUI() {
-  document.getElementById('fontVal').textContent = (settings.fontSize || 2.8).toFixed(1);
+  document.getElementById('fontVal').textContent = (settings.fontSize || 4.9).toFixed(1);
   document.getElementById('widthVal').textContent = (settings.textWidth || 1800);
   document.getElementById('wordSpVal').textContent = (settings.wordSpacing || 0) + 'px';
   var hlSlider = document.getElementById('highlightRemoteSlider');
   var hlVal = document.getElementById('hlRemoteVal');
-  var hl = settings.highlightLevel || 0;
+  var hl = (typeof settings.highlightLevel === 'number') ? settings.highlightLevel : 75;
   if (hlSlider && parseInt(hlSlider.value) !== hl) hlSlider.value = hl;
   if (hlVal) hlVal.textContent = hl === 0 ? 'Off' : hl + '%';
   var hlLinesVal = document.getElementById('hlLinesRemoteVal');
-  if (hlLinesVal) hlLinesVal.textContent = settings.highlightLines || 3;
+  if (hlLinesVal) hlLinesVal.textContent = settings.highlightLines || 4;
 }
 
 function poll() {
@@ -2348,7 +2356,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <script>
 var lastSlide = -1;
 var slideshow_active_flag = false;
-var fontSize = 2.8;
+var fontSize = 4.9;
 var timerRunning = false;
 var timerStart = 0;
 var timerElapsed = 0;
@@ -2432,7 +2440,7 @@ var demoModeActive = false;
 var demoAvailable = false;
 
 // ── Settings sync with server (for remote control) ──
-var lastSettingsVersion = 0;
+var lastSettingsVersion = -1;  // -1 so the first poll always applies settings
 
 function pushSettings() {
   // Push current local state to server so remote stays in sync
@@ -2803,9 +2811,9 @@ fetch('/api/slide-image-debug').then(function(r) { return r.json(); }).then(func
 }).catch(function(){});
 
 // ── Highlight bar ──
-var highlightOn = false;
-var highlightLevel = 0;  // 0-100
-var highlightLines = 3;  // number of text lines the bar covers (1-8)
+var highlightOn = true;
+var highlightLevel = 75;  // 0-100 (default: highlighted at 75%)
+var highlightLines = 4;   // number of text lines the bar covers (1-8)
 
 // Highlight bar uses position:sticky inside the teleprompter — no JS positioning needed.
 
@@ -2831,6 +2839,14 @@ function changeHighlightLines(delta) {
 
 applyHighlightLines();
 
+// Initialize body class + opacity so the default 75% highlight shows
+// immediately on page load (before the first poll brings server settings).
+(function() {
+  document.body.classList.toggle('highlight-on', highlightLevel > 0);
+  var opacity = (highlightLevel / 100) * 0.45;
+  document.documentElement.style.setProperty('--hl-opacity', opacity.toFixed(3));
+})();
+
 function setHighlightLevel(val) {
   highlightLevel = Math.max(0, Math.min(100, Math.round(val)));
   highlightOn = highlightLevel > 0;
@@ -2851,7 +2867,7 @@ function toggleHighlight() {
 }
 
 // ── UI Scale (makes control panel buttons bigger/smaller) ──
-var uiScaleLevel = 0;  // -2 to +4, 0 = normal
+var uiScaleLevel = 2;  // -2 to +4, 0 = normal, +2 = 1.25x (larger controls)
 var UI_SCALES = [0.8, 0.9, 1.0, 1.1, 1.25, 1.4, 1.6];
 var UI_SCALE_LABELS = ['0.8x', '0.9x', '1x', '1.1x', '1.25x', '1.4x', '1.6x'];
 
