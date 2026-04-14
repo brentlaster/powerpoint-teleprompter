@@ -230,16 +230,26 @@ def prev_slide():
     _set_slide(current_slide - 1)
 
 
+_last_vba_report_time = 0.0  # monotonic time of last VBA slide report
+
 def _receive_slide(idx, tot):
     """Called when VBA macro reports a slide change."""
-    global current_slide, total_slides, slideshow_active
+    global current_slide, total_slides, slideshow_active, _last_vba_report_time
     current_slide = idx
     if tot > 0:
         total_slides = tot
     slideshow_active = True
+    _last_vba_report_time = time.monotonic()
     # Trigger immediate screenshot for portrait preview
     if platform.system() == "Darwin":
         threading.Thread(target=_capture_slideshow_screenshot, daemon=True).start()
+
+
+def _vba_is_active():
+    """True if the VBA macro has reported a slide change recently.
+    When active, pynput keyboard mode should defer to VBA as source of truth
+    (VBA only fires on actual slide changes, not animation builds)."""
+    return (time.monotonic() - _last_vba_report_time) < 10.0
 
 
 def _receive_stopped():
@@ -628,19 +638,32 @@ def start_keyboard_listener():
         return "PowerPoint" in app
 
     def on_press(key):
+        # If the VBA macro is actively reporting slide changes, let it be the
+        # source of truth — pynput should NOT advance the teleprompter on
+        # slide-nav keys, because VBA knows when PowerPoint actually changed
+        # slides (vs. stepped through an animation build).
+        vba_active = _vba_is_active()
         try:
             ch = key.char
             if ch in ADVANCE_CHARS:
+                if vba_active:
+                    return  # VBA will report the real slide change
                 if ch in ALWAYS_ON_CHARS or _is_powerpoint_active():
                     next_slide()
             elif ch in RETREAT_CHARS:
+                if vba_active:
+                    return
                 if ch in ALWAYS_ON_CHARS or _is_powerpoint_active():
                     prev_slide()
         except AttributeError:
             if key in ADVANCE_KEYS:
+                if vba_active:
+                    return
                 if key in ALWAYS_ON_KEYS or _is_powerpoint_active():
                     next_slide()
             elif key in RETREAT_KEYS:
+                if vba_active:
+                    return
                 if key in ALWAYS_ON_KEYS or _is_powerpoint_active():
                     prev_slide()
             elif key == keyboard.Key.home:
