@@ -3062,19 +3062,47 @@ addTouchButton('demoToggleBtn', toggleDemoMode);
   fetch('/api/settings', { method: 'GET' }).catch(function(){});
 })();
 
-// ── Collapsible panel (touch-safe) ──
+// ── Collapsible panel (touch-safe) + auto-minimize after 3 min idle ──
 (function() {
   var hdr = document.getElementById('cpHeader');
+  var panel = document.getElementById('controlPanel');
+  var AUTO_COLLAPSE_MS = 3 * 60 * 1000;  // 3 minutes
+  var autoCollapseTimer = null;
+
+  function setCollapsed(collapsed) {
+    panel.classList.toggle('collapsed', collapsed);
+    document.getElementById('cpToggle').innerHTML = collapsed ? '&#x25B2;' : '&#x25BC;';
+  }
+
+  function scheduleAutoCollapse() {
+    if (autoCollapseTimer) clearTimeout(autoCollapseTimer);
+    // Only arm the timer if the panel is currently expanded
+    if (panel.classList.contains('collapsed')) return;
+    autoCollapseTimer = setTimeout(function() {
+      setCollapsed(true);
+    }, AUTO_COLLAPSE_MS);
+  }
+
   function doToggle(e) {
     e.preventDefault();
     e.stopPropagation();
-    var panel = document.getElementById('controlPanel');
-    panel.classList.toggle('collapsed');
-    document.getElementById('cpToggle').innerHTML =
-      panel.classList.contains('collapsed') ? '&#x25B2;' : '&#x25BC;';
+    setCollapsed(!panel.classList.contains('collapsed'));
+    scheduleAutoCollapse();
   }
   hdr.addEventListener('touchend', doToggle);
   hdr.addEventListener('click', doToggle);
+
+  // Reset the idle timer on any interaction with the panel while it's open.
+  // We intentionally don't reset on mouse MOVEMENT — only on clicks/taps —
+  // so simply having the cursor pass over the panel doesn't keep it open.
+  ['mousedown', 'touchstart', 'keydown', 'input', 'change'].forEach(function(ev) {
+    panel.addEventListener(ev, function() {
+      if (!panel.classList.contains('collapsed')) scheduleAutoCollapse();
+    }, true);
+  });
+
+  // Start the auto-collapse timer on page load
+  scheduleAutoCollapse();
 })();
 
 // ── Init ──
